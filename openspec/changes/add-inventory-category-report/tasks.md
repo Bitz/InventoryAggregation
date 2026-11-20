@@ -101,9 +101,12 @@ was left and how it would be done into the README's limitations section instead 
       (D23); no metrics export, anything from §0–§8 left undone, and what would change with more time.
 
 ## 10. Verify
-- [ ] Fresh clone into an empty folder, follow the README word for word, on a machine state with only
-      the .NET 10 SDK: build, test, run, call the endpoint.
-- [ ] Search the full history for the key value.
+- [x] Fresh clone into an empty folder, follow the README word for word, on a machine state with only
+      the .NET 10 SDK: build, test, run, call the endpoint. (2026-11-20: clone built with 0 warnings, 119 tests
+      and spec:check passed. Run on the development machine, not a pristine one.)
+- [x] Search the full history for the key value. (2026-11-20: neither the key nor the upstream host in any commit.)
 - [x] Every scenario in the six specs maps to a test or to a stated limitation.
-- [ ] Rehearse a change: add one more per-category figure end to end and note which files it touched.
+- [x] Rehearse a change: add one more per-category figure end to end and note which files it touched.
       If more than the aggregator, its result type, the response mapping and tests changed, simplify.
+      (2026-11-20: total units per category touched `CategoryAggregator.cs` (aggregator and `CategorySummary`),
+      `CategoryReportResponse.cs` and `CategoryAggregatorTests.cs`; nothing else.)
