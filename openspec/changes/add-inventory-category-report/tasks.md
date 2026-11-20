@@ -29,19 +29,21 @@ was left and how it would be done into the README's limitations section instead 
 
 ## 2. Configuration (`service-configuration`)
 - [ ] `InventoryApiOptions` with validation and `ValidateOnStart`; startup failure names the setting.
-- [ ] `appsettings.json` with defaults and no key; `UserSecretsId` on the Api project.
-- [ ] `AddInventoryAggregation(IConfiguration)` registers every own component and `TimeProvider.System`.
-- [ ] Header redaction for the key in `IHttpClientFactory` logging.
+- [x] `appsettings.json` with defaults and no key; `UserSecretsId` on the Api project.
+- [x] `AddInventoryAggregation(IConfiguration)` registers every own component and `TimeProvider.System`.
+- [x] Header redaction for the key in `IHttpClientFactory` logging.
 
 ## 3. Upstream client (`inventory-source`)
-- [ ] Envelope and raw-record DTOs (nullable fields, `decimal` price).
-- [ ] `InventoryApiClient : IInventoryPageSource` as a typed client.
-- [ ] Resilience handler: total timeout ▸ retry (transient predicate, backoff with jitter,
+- [x] Envelope and raw-record DTOs (nullable fields, `decimal` price).
+- [x] `InventoryApiClient : IInventoryPageSource` as a typed client.
+- [x] Resilience handler: total timeout ▸ retry (transient predicate, backoff with jitter,
       `Retry-After` delay with cap) ▸ attempt timeout. Wire the pipeline's `TimeProvider` for tests.
-- [ ] Status classification and `PageResult` / failure kinds; cancellation passes through.
-- [ ] Shared rate limiter (`System.Threading.RateLimiting`, fixed window, 5 per 10 s) registered as a
-      singleton and placed so retries also take a permit (D22).
-- [ ] Retry log entries.
+- [x] Status classification and `PageResult` / failure kinds; cancellation passes through.
+- [x] Shared rate limiter (`System.Threading.RateLimiting`, 5 per 10 s) registered as a singleton and placed so
+      retries also take a permit (D22). Each permit returns a full window after its request finished, rather
+      than at a client-side fixed-window boundary: the upstream's window boundaries are not visible to us, and a
+      client fixed window that straddled one could let up to 10 requests into a single upstream window.
+- [x] Retry log entries.
 
 ## 4. Collection (`inventory-collection`)
 - [x] Page 1 reference, bounded-concurrency fetch of the rest.
@@ -70,7 +72,7 @@ was left and how it would be done into the README's limitations section instead 
       `inventory-collection` (wrong page, drift, short page, overlapping page, overlap with omission,
       conflicts, past-the-end records,
       one-off glitch, too large, timeout, cancellation, concurrency bound).
-- [ ] Api: client over a scripted `HttpMessageHandler` and `FakeTimeProvider` covering every scenario in
+- [x] Api: client over a scripted `HttpMessageHandler` and `FakeTimeProvider` covering every scenario in
       `inventory-source` (retry then success, exhaustion, `Retry-After` honoured and too long, fail-fast
       statuses, unknown status, hang, truncated body, cancellation, key not in URL or logs, pacing at
       5 per 10 s across two concurrent collections).
