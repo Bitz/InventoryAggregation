@@ -37,7 +37,7 @@ public sealed record StoredReport(CategoryReport Report, RefreshTrigger Trigger)
 /// <see cref="Success"/> or a failure kind. <see cref="Detail"/> is set for failures and is safe to show
 /// a caller.
 /// </summary>
-public sealed record RefreshAttempt(DateTimeOffset At, RefreshTrigger Trigger, string Outcome, string? Detail)
+public sealed record RefreshAttempt(DateTimeOffset StartedAt, RefreshTrigger Trigger, string Outcome, string? Detail)
 {
     public const string Success = "success";
 

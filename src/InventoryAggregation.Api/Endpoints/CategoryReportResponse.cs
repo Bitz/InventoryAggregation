@@ -66,14 +66,14 @@ public sealed record FreshnessResponse(
 
 /// <summary>The latest refresh attempt: when it started, and <c>success</c> or the failure kind with its detail.</summary>
 public sealed record LastRefreshResponse(
-    DateTime At,
+    DateTime StartedAt,
     string Outcome,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Detail)
 {
     public static LastRefreshResponse From(RefreshAttempt attempt)
     {
         ArgumentNullException.ThrowIfNull(attempt);
-        return new(attempt.At.UtcDateTime, attempt.Outcome, attempt.Succeeded ? null : attempt.Detail);
+        return new(attempt.StartedAt.UtcDateTime, attempt.Outcome, attempt.Succeeded ? null : attempt.Detail);
     }
 }
 

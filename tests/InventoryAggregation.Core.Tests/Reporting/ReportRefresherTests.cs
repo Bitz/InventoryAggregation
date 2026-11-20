@@ -55,7 +55,7 @@ public sealed class ReportRefresherTests
         Assert.Same(stored, after.Latest);
         Assert.True(after.IsStale);
         Assert.Equal(FailureKinds.IncompleteDataset, after.LastAttempt!.Outcome);
-        Assert.Equal(T0.AddMinutes(5), after.LastAttempt.At);
+        Assert.Equal(T0.AddMinutes(5), after.LastAttempt.StartedAt);
         Assert.Equal(RefreshTrigger.Scheduled, after.LastAttempt.Trigger);
         Assert.Contains("157", after.LastAttempt.Detail, StringComparison.Ordinal);
     }
@@ -86,13 +86,13 @@ public sealed class ReportRefresherTests
         var source = new ScriptedPageSource(call => ScriptedPageSource.Fail(FailureKinds.UpstreamUnavailable, call.Page));
         await using var harness = new RefreshHarness(source);
         await harness.StartAsync();
-        var attempts = new List<DateTimeOffset> { harness.Store.Snapshot.LastAttempt!.At };
+        var attempts = new List<DateTimeOffset> { harness.Store.Snapshot.LastAttempt!.StartedAt };
 
         foreach (var gap in new[] { 30, 60, 120 })
         {
             await harness.AdvanceAsync(TimeSpan.FromSeconds(gap - 1));
-            Assert.Equal(attempts[^1], harness.Store.Snapshot.LastAttempt!.At);
-            attempts.Add((await harness.AdvanceAsync(TimeSpan.FromSeconds(1))).LastAttempt!.At);
+            Assert.Equal(attempts[^1], harness.Store.Snapshot.LastAttempt!.StartedAt);
+            attempts.Add((await harness.AdvanceAsync(TimeSpan.FromSeconds(1))).LastAttempt!.StartedAt);
         }
 
         Assert.Equal([30d, 60d, 120d], attempts.Zip(attempts.Skip(1), (a, b) => (b - a).TotalSeconds));
@@ -109,9 +109,9 @@ public sealed class ReportRefresherTests
 
         for (var i = 0; i < 6; i++)
         {
-            var before = harness.Store.Snapshot.LastAttempt!.At;
+            var before = harness.Store.Snapshot.LastAttempt!.StartedAt;
             var after = await harness.NextRefreshAsync();
-            gaps.Add((after.LastAttempt!.At - before).TotalSeconds);
+            gaps.Add((after.LastAttempt!.StartedAt - before).TotalSeconds);
         }
 
         Assert.Equal([30d, 60d, 120d, 240d, 300d, 300d], gaps);
@@ -133,12 +133,12 @@ public sealed class ReportRefresherTests
 
         var recovered = await harness.NextRefreshAsync();
 
-        Assert.Equal(T0.AddSeconds(90), recovered.LastAttempt!.At);
+        Assert.Equal(T0.AddSeconds(90), recovered.LastAttempt!.StartedAt);
         Assert.True(recovered.LastAttempt.Succeeded);
         Assert.Equal(T0.AddSeconds(90), recovered.Latest!.AsOf);
         Assert.Equal(T0.AddSeconds(90).AddMinutes(5), harness.Refresher.Status().NextRefreshAt);
         var next = await harness.NextRefreshAsync();
-        Assert.Equal(T0.AddSeconds(90).AddMinutes(5), next.LastAttempt!.At);
+        Assert.Equal(T0.AddSeconds(90).AddMinutes(5), next.LastAttempt!.StartedAt);
     }
 
     [Fact]
@@ -347,7 +347,7 @@ public sealed class ReportRefresherTests
         Assert.Equal(calls, source.Calls.Count);
         var next = await harness.AdvanceAsync(TimeSpan.FromMinutes(4.5));
         Assert.Equal(RefreshTrigger.Scheduled, next.LastAttempt!.Trigger);
-        Assert.Equal(T0.AddSeconds(10).AddMinutes(5), next.LastAttempt.At);
+        Assert.Equal(T0.AddSeconds(10).AddMinutes(5), next.LastAttempt.StartedAt);
     }
 
     [Fact]

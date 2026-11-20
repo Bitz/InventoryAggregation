@@ -136,9 +136,9 @@ public sealed class CategoryReportEndpointTests
         Assert.False(freshness.GetProperty("overdue").GetBoolean());
         Assert.Equal("scheduled", freshness.GetProperty("trigger").GetString());
         var last = freshness.GetProperty("lastRefresh");
+        Assert.Equal(["startedAt", "outcome"], last.EnumerateObject().Select(p => p.Name));
         Assert.Equal("success", last.GetProperty("outcome").GetString());
-        Assert.Equal("2026-11-20T15:09:05Z", last.GetProperty("at").GetString());
-        Assert.False(last.TryGetProperty("detail", out _));
+        Assert.Equal("2026-11-20T15:09:05Z", last.GetProperty("startedAt").GetString());
         Assert.Equal("2026-11-20T15:14:05Z", freshness.GetProperty("nextRefreshAt").GetString());
     }
 
@@ -190,7 +190,7 @@ public sealed class CategoryReportEndpointTests
         Assert.Equal("startup", freshness.GetProperty("trigger").GetString());
         var last = freshness.GetProperty("lastRefresh");
         Assert.Equal(FailureKinds.UpstreamUnavailable, last.GetProperty("outcome").GetString());
-        Assert.Equal("2026-11-20T15:09:05Z", last.GetProperty("at").GetString());
+        Assert.Equal("2026-11-20T15:09:05Z", last.GetProperty("startedAt").GetString());
         Assert.False(string.IsNullOrEmpty(last.GetProperty("detail").GetString()));
         Assert.Equal(300, freshness.GetProperty("ageSeconds").GetInt64());
     }
@@ -244,7 +244,7 @@ public sealed class CategoryReportEndpointTests
         Assert.False(string.IsNullOrEmpty(problem.GetProperty("traceId").GetString()));
         var last = problem.GetProperty("lastRefresh");
         Assert.Equal(FailureKinds.UpstreamMisconfigured, last.GetProperty("outcome").GetString());
-        Assert.Equal("2026-11-20T15:04:05Z", last.GetProperty("at").GetString());
+        Assert.Equal("2026-11-20T15:04:05Z", last.GetProperty("startedAt").GetString());
         Assert.False(problem.TryGetProperty("categories", out _));
         Assert.DoesNotContain(ClientHarness.ApiKey, text, StringComparison.Ordinal);
         Assert.DoesNotContain("inventory.test", text, StringComparison.Ordinal);
@@ -268,7 +268,7 @@ public sealed class CategoryReportEndpointTests
         Assert.Equal(FailureKinds.ReportNotReady, problem.GetProperty("kind").GetString());
         var last = problem.GetProperty("lastRefresh");
         Assert.Equal(FailureKinds.UpstreamUnavailable, last.GetProperty("outcome").GetString());
-        Assert.Equal("2026-11-20T15:04:10Z", last.GetProperty("at").GetString());
+        Assert.Equal("2026-11-20T15:04:10Z", last.GetProperty("startedAt").GetString());
         Assert.True(source.Calls.Count > calls, "the forced request ran a collection");
     }
 

@@ -40,7 +40,7 @@ return `200` with `application/json` in camelCase:
     "trigger": "scheduled",
     "stale": false,
     "overdue": false,
-    "lastRefresh": { "at": "2026-11-20T15:03:55Z", "outcome": "success" },
+    "lastRefresh": { "startedAt": "2026-11-20T15:03:55Z", "outcome": "success" },
     "nextRefreshAt": "2026-11-20T15:08:55Z"
   }
 }
@@ -114,7 +114,8 @@ Every `200` SHALL carry `freshness` with `asOf` (equal to `summary.generatedAt`)
 ### Requirement: Every report says whether refreshing is failing
 `freshness` SHALL carry `stale` (true when the latest attempt failed after the served report was made),
 `overdue` (true when the report is older than `StaleAfter`), and `lastRefresh` with the latest attempt's
-`at`, its `outcome` (`success` or a failure kind from `design.md` §5) and, when it failed, its `detail`.
+`startedAt` (when it started), its `outcome` (`success` or a failure kind from `design.md` §5) and, when it
+failed, its `detail` (`design.md` D37).
 
 #### Scenario: Healthy refresh
 - **WHEN** the latest refresh succeeded
