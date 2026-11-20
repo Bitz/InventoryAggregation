@@ -120,7 +120,7 @@ Age: 1
     "trigger": "startup",
     "stale": false,
     "overdue": false,
-    "lastRefresh": { "startedAt": "2026-11-20T17:32:23.8337818Z", "outcome": "success" },
+    "lastRefresh": { "startedAt": "2026-11-20T17:32:23Z", "outcome": "success" },
     "nextRefreshAt": "2026-11-20T17:33:23.8108797Z"
   }
 }
@@ -139,7 +139,7 @@ rejectedRecords.length = totalRecords`. `requests` counts every request sent ups
 | `trigger` | what built this report: `startup`, `scheduled` or `fresh` |
 | `stale` | the latest refresh, which came after this report, failed |
 | `overdue` | the report is older than `StaleAfter` (1 hour) |
-| `lastRefresh` | the latest attempt: `startedAt`, `outcome` (`success` or a failure kind) and, for a failure, `detail` |
+| `lastRefresh` | the latest attempt: `startedAt` (whole seconds), `outcome` (`success` or a failure kind) and, for a failure, `detail` |
 | `nextRefreshAt` | when the next scheduled refresh, or retry, is due |
 
 **When the upstream fails after a good report: still `200`.** The service keeps the report it had and
@@ -153,7 +153,7 @@ marks it stale. From the fake upstream switched to `throttle` a minute after a g
   "stale": true,
   "overdue": false,
   "lastRefresh": {
-    "startedAt": "2026-11-20T17:33:23.8120461Z",
+    "startedAt": "2026-11-20T17:33:23Z",
     "outcome": "upstream-throttled",
     "detail": "The Inventory API is throttling requests (status 429) for page 1: asked to wait 120 s, longer than the 10 s the service waits."
   },
@@ -192,7 +192,7 @@ Retry-After: 37
   "kind": "report-not-ready",
   "traceId": "00-2bcd7b1e8d3b89afe67618bd1f842611-7902bab98a74bbbb-03",
   "lastRefresh": {
-    "startedAt": "2026-11-20T17:34:48.8200192Z",
+    "startedAt": "2026-11-20T17:34:48Z",
     "outcome": "upstream-misconfigured",
     "detail": "The Inventory API answered 401: the API key is missing or rejected. Check InventoryApi:ApiKey."
   }
@@ -343,7 +343,7 @@ payloads.
 dotnet test
 ```
 
-188 tests, about 15 seconds. No test calls the real upstream. Retries, backoff, timeouts, the rate
+189 tests, about 15 seconds. No test calls the real upstream. Retries, backoff, timeouts, the rate
 limiter and the refresh schedule run on `FakeTimeProvider`, so a 30-second page timeout or a 5-minute
 refresh interval takes a fraction of a second. Tests that cover a spec scenario carry
 `[Trait("Scenario", "<capability>/<scenario title>")]`; every scenario in the specs has at least one.
@@ -602,7 +602,7 @@ tests/                             Core tests (scripted page source) and Api tes
 tools/FakeInventoryApi/            local fake upstream with fault modes
 tools/openspec/                    drift checker used by spec:check
 openspec/specs/                    the built behaviour, one spec per capability, every scenario tested
-openspec/changes/archive/          the archived changes: proposal, design (decisions D1–D26, D27–D36, D37, D38), tasks, probe findings
+openspec/changes/archive/          the archived changes: proposal, design (decisions D1–D26, D27–D36, D37–D39), tasks, probe findings
 .github/workflows/, .githooks/     spec checks in CI and before each commit
 recordings/                        (git-ignored) raw upstream responses and the expected report
 ```

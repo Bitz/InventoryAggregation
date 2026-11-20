@@ -64,7 +64,7 @@ public sealed record FreshnessResponse(
     }
 }
 
-/// <summary>The latest refresh attempt: when it started, and <c>success</c> or the failure kind with its detail.</summary>
+/// <summary>The latest refresh attempt: when it started, in whole seconds, and <c>success</c> or the failure kind with its detail.</summary>
 public sealed record LastRefreshResponse(
     DateTime StartedAt,
     string Outcome,
@@ -73,7 +73,9 @@ public sealed record LastRefreshResponse(
     public static LastRefreshResponse From(RefreshAttempt attempt)
     {
         ArgumentNullException.ThrowIfNull(attempt);
-        return new(attempt.StartedAt.UtcDateTime, attempt.Outcome, attempt.Succeeded ? null : attempt.Detail);
+        // Whole seconds, truncated (design.md D39); the store keeps the full value.
+        var startedAt = attempt.StartedAt.UtcDateTime;
+        return new(startedAt.AddTicks(-(startedAt.Ticks % TimeSpan.TicksPerSecond)), attempt.Outcome, attempt.Succeeded ? null : attempt.Detail);
     }
 }
 

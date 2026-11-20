@@ -115,7 +115,8 @@ Every `200` SHALL carry `freshness` with `asOf` (equal to `summary.generatedAt`)
 `freshness` SHALL carry `stale` (true when the latest attempt failed after the served report was made),
 `overdue` (true when the report is older than `StaleAfter`), and `lastRefresh` with the latest attempt's
 `startedAt` (when it started), its `outcome` (`success` or a failure kind from `design.md` §5) and, when it
-failed, its `detail` (`design.md` D37).
+failed, its `detail` (`design.md` D37). `startedAt` SHALL be in whole seconds, truncated
+(`design.md` D39).
 
 #### Scenario: Healthy refresh
 - **WHEN** the latest refresh succeeded
@@ -124,6 +125,10 @@ failed, its `detail` (`design.md` D37).
 #### Scenario: Overdue report
 - **WHEN** no refresh has succeeded for longer than `StaleAfter`
 - **THEN** the response is `200` with `overdue` true
+
+#### Scenario: Start in whole seconds
+- **WHEN** the latest attempt started at 15:04:06.7
+- **THEN** `lastRefresh.startedAt` is `2026-11-20T15:04:06Z`, in the `200` response and in a `503` body
 
 ### Requirement: A failed refresh does not reach the caller as an error
 While a good report is stored, a failed refresh SHALL NOT change the response status: the caller SHALL get

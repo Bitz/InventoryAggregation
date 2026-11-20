@@ -166,6 +166,31 @@ public sealed class CategoryReportEndpointTests
     }
 
     [Fact]
+    [Trait("Scenario", "category-report-endpoint/Start in whole seconds")]
+    public async Task The_last_refresh_start_is_truncated_to_whole_seconds()
+    {
+        var failing = true;
+        var source = new FakePageSource(page => Volatile.Read(ref failing)
+            ? FakePageSource.Fail(FailureKinds.UpstreamUnavailable, page)
+            : FakePageSource.Healthy(page));
+        await using var api = new TestApi { PageSource = source };
+        var client = await api.StartedAsync();
+        await api.ParkThenAdvanceAsync(TimeSpan.FromMilliseconds(1700));
+
+        using var notReady = await client.GetAsync($"{Route}?fresh=true", Ct);
+        var problem = await ReadProblemAsync(notReady);
+        Volatile.Write(ref failing, false);
+        using var ok = await client.GetAsync($"{Route}?fresh=true", Ct);
+        var freshness = (await ReadJsonAsync(ok)).GetProperty("freshness");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, notReady.StatusCode);
+        Assert.Equal("2026-11-20T15:04:06Z", problem.GetProperty("lastRefresh").GetProperty("startedAt").GetString());
+        Assert.Equal("2026-11-20T15:04:06Z", freshness.GetProperty("lastRefresh").GetProperty("startedAt").GetString());
+        Assert.Equal("2026-11-20T15:04:06.7Z", freshness.GetProperty("asOf").GetString());
+        Assert.Equal(new DateTimeOffset(2026, 11, 20, 15, 4, 6, 700, TimeSpan.Zero), api.Store.Snapshot.LastAttempt!.StartedAt);
+    }
+
+    [Fact]
     [Trait("Scenario", "category-report-endpoint/Upstream down after a good report")]
     public async Task A_failed_refresh_after_a_good_one_serves_the_old_figures_as_stale()
     {
