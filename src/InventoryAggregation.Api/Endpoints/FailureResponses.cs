@@ -1,42 +1,34 @@
 using System.Diagnostics;
 using System.Globalization;
 using InventoryAggregation.Core;
+using InventoryAggregation.Core.Reporting;
 using Microsoft.AspNetCore.Mvc;
 
 namespace InventoryAggregation.Api.Endpoints;
 
 /// <summary>
 /// The one place that maps a failure kind to an HTTP status and a Problem Details body (design.md D16).
-/// The status tells the caller whose fault it is and whether retrying helps.
+/// Collection failures no longer reach the caller as errors; they show as
+/// <c>freshness.lastRefresh.outcome</c>. What is left is <c>report-not-ready</c> while no good report
+/// exists, and <c>internal-error</c> for a bug.
 /// </summary>
 public static class FailureResponses
 {
     private static readonly Dictionary<string, (int Status, string Title)> ByKind = new(StringComparer.Ordinal)
     {
-        [FailureKinds.UpstreamUnavailable] = (StatusCodes.Status502BadGateway, "The Inventory API could not be reached"),
-        [FailureKinds.UpstreamThrottled] = (StatusCodes.Status503ServiceUnavailable, "The Inventory API is throttling requests"),
-        [FailureKinds.UpstreamTimeout] = (StatusCodes.Status504GatewayTimeout, "The report did not finish in time"),
-        [FailureKinds.UpstreamMisconfigured] = (StatusCodes.Status500InternalServerError, "The service's Inventory API configuration was rejected"),
-        [FailureKinds.UpstreamRejected] = (StatusCodes.Status502BadGateway, "The Inventory API rejected the request"),
-        [FailureKinds.UpstreamUnexpectedStatus] = (StatusCodes.Status502BadGateway, "The Inventory API answered with an unexpected status"),
-        [FailureKinds.MalformedResponse] = (StatusCodes.Status502BadGateway, "The Inventory API sent a response that could not be read"),
-        [FailureKinds.InconsistentPaging] = (StatusCodes.Status502BadGateway, "The Inventory API's pages do not agree"),
-        [FailureKinds.IncompleteDataset] = (StatusCodes.Status502BadGateway, "The upstream data could not be verified as complete"),
-        [FailureKinds.ConflictingRecords] = (StatusCodes.Status502BadGateway, "The Inventory API returned conflicting records"),
-        [FailureKinds.InvalidRecords] = (StatusCodes.Status502BadGateway, "Some inventory records are invalid"),
-        [FailureKinds.DatasetTooLarge] = (StatusCodes.Status502BadGateway, "The Inventory API reports more data than the service accepts"),
+        [FailureKinds.ReportNotReady] = (StatusCodes.Status503ServiceUnavailable, "No inventory report is available yet"),
         [FailureKinds.InternalError] = (StatusCodes.Status500InternalServerError, "An unexpected error occurred"),
     };
 
     public static IReadOnlyCollection<string> Kinds => ByKind.Keys;
 
     public static int StatusFor(string kind) =>
-        ByKind.TryGetValue(kind, out var entry) ? entry.Status : StatusCodes.Status502BadGateway;
+        ByKind.TryGetValue(kind, out var entry) ? entry.Status : StatusCodes.Status500InternalServerError;
 
     public static ProblemDetails Create(string kind, string detail, HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        var (status, title) = ByKind.TryGetValue(kind, out var entry) ? entry : (StatusCodes.Status502BadGateway, "The report could not be produced");
+        var (status, title) = ByKind.TryGetValue(kind, out var entry) ? entry : (StatusCodes.Status500InternalServerError, "An unexpected error occurred");
 
         var problem = new ProblemDetails
         {
@@ -50,45 +42,35 @@ public static class FailureResponses
         return problem;
     }
 
-    /// <summary>The Problem Details result for a failure, with its evidence and, for throttling, <c>Retry-After</c>.</summary>
-    public static IResult ToResult(InventoryFailure failure, HttpContext context)
+    /// <summary>
+    /// <c>503 report-not-ready</c> (design.md D29) with the last attempt, when one has finished, and
+    /// <c>Retry-After</c>: <paramref name="rateLimitWindow"/> while a refresh is running, otherwise the
+    /// seconds until the next attempt plus <paramref name="rateLimitWindow"/>.
+    /// </summary>
+    public static IResult NotReady(RefreshStatus status, DateTimeOffset now, TimeSpan rateLimitWindow, HttpContext context)
     {
-        ArgumentNullException.ThrowIfNull(failure);
+        ArgumentNullException.ThrowIfNull(status);
         ArgumentNullException.ThrowIfNull(context);
 
-        var problem = Create(failure.Kind, failure.Detail, context);
-        AddIfPresent(problem, "page", failure.Page);
-        AddIfPresent(problem, "expectedCount", failure.ExpectedCount);
-        AddIfPresent(problem, "collectedCount", failure.CollectedCount);
-        if (failure.DuplicateIds.Count > 0)
+        var attempt = status.Store.LastAttempt;
+        var detail = (status.IsRefreshing, attempt) switch
         {
-            problem.Extensions["duplicateIds"] = failure.DuplicateIds;
+            (true, null) => "The first report since the service started is being collected.",
+            (true, _) => $"No report has been produced since the service started; the last attempt failed with {attempt.Outcome} and another is running.",
+            (false, null) => "No report has been produced since the service started.",
+            (false, _) => $"No report has been produced since the service started; the last attempt failed with {attempt.Outcome}.",
+        };
+
+        var problem = Create(FailureKinds.ReportNotReady, detail, context);
+        if (attempt is not null)
+        {
+            problem.Extensions["lastRefresh"] = LastRefreshResponse.From(attempt);
         }
 
-        if (failure.ConflictingIds.Count > 0)
-        {
-            problem.Extensions["conflictingIds"] = failure.ConflictingIds;
-        }
-
-        if (failure.RejectedRecords.Count > 0)
-        {
-            problem.Extensions["rejectedRecords"] = failure.RejectedRecords.Select(RejectedRecordResponse.From).ToList();
-        }
-
-        if (problem.Status == StatusCodes.Status503ServiceUnavailable)
-        {
-            var wait = failure.RetryAfter ?? TimeSpan.FromSeconds(10);
-            context.Response.Headers.RetryAfter = Math.Ceiling(wait.TotalSeconds).ToString(CultureInfo.InvariantCulture);
-        }
+        var untilNext = status.NextRefreshAt - now;
+        var wait = status.IsRefreshing || untilNext <= TimeSpan.Zero ? rateLimitWindow : untilNext + rateLimitWindow;
+        context.Response.Headers.RetryAfter = Math.Ceiling(wait.TotalSeconds).ToString(CultureInfo.InvariantCulture);
 
         return TypedResults.Problem(problem);
-    }
-
-    private static void AddIfPresent(ProblemDetails problem, string name, int? value)
-    {
-        if (value is not null)
-        {
-            problem.Extensions[name] = value;
-        }
     }
 }

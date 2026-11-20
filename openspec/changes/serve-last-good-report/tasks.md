@@ -9,40 +9,40 @@ aggregator, upstream client, rate limiter) should change; if it has to, stop and
 - [x] Startup failure for out-of-order refresh settings names both settings.
 
 ## 2. Store and refresher (`report-refresh`)
-- [ ] `ReportStore` in Core: the latest good `CategoryReport` with its trigger, plus the last attempt's time,
+- [x] `ReportStore` in Core: the latest good `CategoryReport` with its trigger, plus the last attempt's time,
       outcome and detail. Thread-safe; replaced only on success (D7).
-- [ ] `ReportRefresher` in Core: one collection at a time (move the sharing out of `InventoryReportService`,
+- [x] `ReportRefresher` in Core: one collection at a time (move the sharing out of `InventoryReportService`,
       which becomes a plain collect ▸ validate ▸ aggregate call); `RefreshAsync(trigger)`;
       `GetFreshAsync(cancellationToken)` with the `FreshMaxAge` floor (D31).
-- [ ] Collections run to the end or `CollectionTimeout` and are cancelled only by shutdown (D33). Drop the
+- [x] Collections run to the end or `CollectionTimeout` and are cancelled only by shutdown (D33). Drop the
       waiter counting. A caller's token only stops that caller's wait (`Task.WaitAsync`).
-- [ ] Schedule: due times from the previous scheduled start (D30, D31); retry delay doubling from
+- [x] Schedule: due times from the previous scheduled start (D30, D31); retry delay doubling from
       `RefreshRetryDelay` up to `RefreshInterval` after failures (D32). All timing on `TimeProvider`.
-- [ ] `ReportRefreshService : BackgroundService` in Api: starts the first refresh without blocking startup,
+- [x] `ReportRefreshService : BackgroundService` in Api: starts the first refresh without blocking startup,
       runs the schedule, stops on shutdown without recording a failure.
 
 ## 3. Endpoint (`category-report-endpoint`)
-- [ ] Plain request reads the store; `fresh=true` calls `GetFreshAsync`. Bind `fresh` as `bool?`.
-- [ ] `freshness` block and `Age` header (D34) on every `200`.
-- [ ] `503` `report-not-ready` with `Retry-After` and `lastRefresh` when nothing is stored (D29). Add
+- [x] Plain request reads the store; `fresh=true` calls `GetFreshAsync`. Bind `fresh` as `bool?`.
+- [x] `freshness` block and `Age` header (D34) on every `200`.
+- [x] `503` `report-not-ready` with `Retry-After` and `lastRefresh` when nothing is stored (D29). Add
       `report-not-ready` to `FailureKinds` and the one status map; remove the collection-kind ▸ status
       mapping from the endpoint path.
-- [ ] Caller disconnect during `fresh=true`: stop waiting, no error logged, collection continues.
-- [ ] OpenAPI: `fresh` and `include` parameters; responses `200`, `400`, `500`, `503`; description updated.
+- [x] Caller disconnect during `fresh=true`: stop waiting, no error logged, collection continues.
+- [x] OpenAPI: `fresh` and `include` parameters; responses `200`, `400`, `500`, `503`; description updated.
 
 ## 4. Lineage and telemetry (`data-lineage`, `service-telemetry`)
-- [ ] `include=audit` returns the stored run's audit.
-- [ ] Root span `refresh inventory report` with `inventory.trigger`; `collect inventory` beneath it; link
+- [x] `include=audit` returns the stored run's audit.
+- [x] Root span `refresh inventory report` with `inventory.trigger`; `collect inventory` beneath it; link
       from a waiting `fresh=true` request span (D35).
-- [ ] `inventory.collections` tagged with trigger; `inventory.report.age` observable gauge.
-- [ ] `Warning` when a refresh fails and the previous report is kept.
+- [x] `inventory.collections` tagged with trigger; `inventory.report.age` observable gauge.
+- [x] `Warning` when a refresh fails and the previous report is kept.
 
 ## 5. Tests
-- [ ] Every scenario in this change's specs has a test with
+- [x] Every scenario in this change's specs has a test with
       `[Trait("Scenario", "<capability>/<title>")]`. Move or delete tests for the three removed
       `category-report-endpoint` requirements and the removed telemetry requirement.
-- [ ] Endpoint tests per collection failure kind: `200` stale after a good report, `503` with none.
-- [ ] Refresher tests on `FakeTimeProvider`: schedule, backoff, floor, sharing, schedule not moved by a
+- [x] Endpoint tests per collection failure kind: `200` stale after a good report, `503` with none.
+- [x] Refresher tests on `FakeTimeProvider`: schedule, backoff, floor, sharing, schedule not moved by a
       forced refresh, shutdown. No test waits on real time.
 - [ ] Fake upstream: a way to switch the fault mode while running (or a mode that fails after N good
       collections) so the stale path can be shown by hand.

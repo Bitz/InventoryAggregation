@@ -15,8 +15,8 @@ public static class InventoryTelemetry
 
 /// <summary>
 /// The service's own measurements, on the <c>InventoryAggregation</c> meter: collections by outcome and
-/// their duration, upstream retries, page refetches and re-collections. Nothing here carries the
-/// upstream address or the key.
+/// trigger and their duration, upstream retries, page refetches, re-collections and the stored report's
+/// age. Nothing here carries the upstream address or the key.
 /// </summary>
 public sealed class InventoryMetrics
 {
@@ -28,12 +28,13 @@ public sealed class InventoryMetrics
     private readonly Counter<long> _rejected;
     private readonly Counter<long> _duplicates;
     private readonly Counter<long> _normalized;
+    private Func<double?>? _reportAge;
 
     public InventoryMetrics(IMeterFactory meterFactory)
     {
         ArgumentNullException.ThrowIfNull(meterFactory);
         var meter = meterFactory.Create(InventoryTelemetry.Name);
-        _collections = meter.CreateCounter<long>("inventory.collections", description: "Collections finished, by outcome: success or the failure kind.");
+        _collections = meter.CreateCounter<long>("inventory.collections", description: "Collections finished, by outcome (success or the failure kind) and trigger (startup, scheduled or fresh).");
         _duration = meter.CreateHistogram<double>("inventory.collection.duration", unit: "s", description: "Time from the start of a collection to its outcome.");
         _retries = meter.CreateCounter<long>("inventory.upstream.retries", description: "Upstream requests retried, by what caused the retry.");
         _refetches = meter.CreateCounter<long>("inventory.collection.page_refetches", description: "Pages fetched again because they disagreed or did not parse.");
@@ -41,14 +42,22 @@ public sealed class InventoryMetrics
         _rejected = meter.CreateCounter<long>("inventory.records.rejected", description: "Rejection reasons found by validation, one per reason.");
         _duplicates = meter.CreateCounter<long>("inventory.records.duplicates_collapsed", description: "Ids that arrived more than once with identical content and were kept once.");
         _normalized = meter.CreateCounter<long>("inventory.records.spellings_normalized", description: "Accepted records whose category spelling differed from the name it is shown under.");
+        meter.CreateObservableGauge("inventory.report.age", ObserveReportAge, unit: "s", description: "Seconds since the stored report was made; nothing while no report is stored.");
     }
 
-    public void CollectionFinished(string outcome, TimeSpan duration)
+    public void CollectionFinished(string outcome, string trigger, TimeSpan duration)
     {
-        var tag = new KeyValuePair<string, object?>("inventory.outcome", outcome);
-        _collections.Add(1, tag);
-        _duration.Record(duration.TotalSeconds, tag);
+        var tags = new TagList
+        {
+            { "inventory.outcome", outcome },
+            { "inventory.trigger", trigger },
+        };
+        _collections.Add(1, tags);
+        _duration.Record(duration.TotalSeconds, tags);
     }
+
+    /// <summary>Where <c>inventory.report.age</c> reads from: seconds since the stored report was made, or null when there is none.</summary>
+    public void TrackReportAge(Func<double?> age) => _reportAge = age;
 
     public void Retried(string reason) => _retries.Add(1, new KeyValuePair<string, object?>("inventory.retry.reason", reason));
 
@@ -61,4 +70,7 @@ public sealed class InventoryMetrics
     public void DuplicatesCollapsed(int count) => _duplicates.Add(count);
 
     public void SpellingsNormalized(int count) => _normalized.Add(count);
+
+    private IEnumerable<Measurement<double>> ObserveReportAge() =>
+        _reportAge?.Invoke() is { } age ? [new Measurement<double>(age)] : [];
 }

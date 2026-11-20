@@ -50,10 +50,8 @@ public sealed class ReportResult
 }
 
 /// <summary>
-/// Collect ▸ validate ▸ aggregate. Requests that arrive while a collection is running share it
-/// (design.md D24): the upstream sees one collection, every waiting caller gets the same outcome, and
-/// nothing is kept once it has been handed out. The shared run is cancelled only when every caller
-/// waiting on it has gone.
+/// Collect ▸ validate ▸ aggregate, once per call. When it runs and who waits for it is
+/// <see cref="ReportRefresher"/>'s business (design.md D24, D27).
 /// </summary>
 public sealed partial class InventoryReportService(
     IServiceScopeFactory scopeFactory,
@@ -64,65 +62,12 @@ public sealed partial class InventoryReportService(
     InventoryMetrics metrics,
     ILogger<InventoryReportService> logger)
 {
-    private readonly Lock _gate = new();
-    private SharedRun? _current;
-
-    public async Task<ReportResult> GetReportAsync(CancellationToken cancellationToken)
+    /// <summary>Builds one report. <paramref name="trigger"/> only labels the run's telemetry.</summary>
+    public async Task<ReportResult> BuildReportAsync(RefreshTrigger trigger, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        SharedRun run;
-        lock (_gate)
-        {
-            if (_current is null)
-            {
-                var started = new SharedRun();
-                _current = started;
-                started.Task = Task.Run(() => RunAsync(started));
-            }
-            else
-            {
-                LogJoining(_current.Waiters);
-            }
-
-            run = _current;
-            run.Waiters++;
-        }
-
-        try
-        {
-            return await run.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            Leave(run);
-        }
-    }
-
-    private void Leave(SharedRun run)
-    {
-        lock (_gate)
-        {
-            run.Waiters--;
-            if (run.Waiters > 0 || run.Task.IsCompleted)
-            {
-                return;
-            }
-
-            // Every caller has gone: stop the upstream work, and let the next caller start afresh.
-            if (ReferenceEquals(_current, run))
-            {
-                _current = null;
-            }
-        }
-
-        LogAbandoned();
-        run.Cancellation.Cancel();
-    }
-
-    private async Task<ReportResult> RunAsync(SharedRun run)
-    {
-        // One span per shared collection, a child of the request that started it (design.md D25).
+        // One span per collection, beneath the refresh that runs it (design.md D35).
         using var activity = InventoryTelemetry.ActivitySource.StartActivity("collect inventory");
 
         // A short id for progress lines: the trace id's start when there is a trace, so a log line leads
@@ -137,7 +82,7 @@ public sealed partial class InventoryReportService(
         string? failureDetail = null;
         try
         {
-            var result = await BuildReportAsync(startedAt, run.Cancellation.Token).ConfigureAwait(false);
+            var result = await CollectAndAggregateAsync(startedAt, cancellationToken).ConfigureAwait(false);
             outcome = result.IsSuccess ? "success" : result.Failure.Kind;
             audit = result.Report?.Audit;
             failureDetail = result.Failure?.Detail;
@@ -154,7 +99,7 @@ public sealed partial class InventoryReportService(
 
             return result;
         }
-        catch (OperationCanceledException) when (run.Cancellation.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             outcome = "cancelled";
             throw;
@@ -168,19 +113,12 @@ public sealed partial class InventoryReportService(
         {
             activity?.SetTag("inventory.outcome", outcome);
             var elapsed = timeProvider.GetElapsedTime(started);
-            metrics.CollectionFinished(outcome, elapsed);
+            metrics.CollectionFinished(outcome, trigger.Name(), elapsed);
             WriteManifest(outcome, activity?.TraceId.ToHexString() ?? "none", audit, failureDetail, elapsed);
-            lock (_gate)
-            {
-                if (ReferenceEquals(_current, run))
-                {
-                    _current = null;
-                }
-            }
         }
     }
 
-    private async Task<ReportResult> BuildReportAsync(DateTimeOffset startedAt, CancellationToken cancellationToken)
+    private async Task<ReportResult> CollectAndAggregateAsync(DateTimeOffset startedAt, CancellationToken cancellationToken)
     {
         CollectionResult collected;
 
@@ -272,21 +210,6 @@ public sealed partial class InventoryReportService(
             audit.Load.RecordsOut,
             seconds);
     }
-
-    private sealed class SharedRun
-    {
-        public CancellationTokenSource Cancellation { get; } = new();
-
-        public Task<ReportResult> Task { get; set; } = null!;
-
-        public int Waiters { get; set; }
-    }
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "A report collection is already running; joining it ({Waiters} caller(s) already waiting)")]
-    private partial void LogJoining(int waiters);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Every caller waiting on the report collection has gone; stopping it")]
-    private partial void LogAbandoned();
 
     [LoggerMessage(EventId = 2600, EventName = "RunManifest", Level = LogLevel.Information, Message = "report {RunId}: run manifest: outcome {Outcome}, fingerprint {Fingerprint}; extract: {RecordsReceived} received, {DistinctRecords} distinct, {CollapsedDuplicates} duplicates collapsed, {PageRefetches} refetches, {Recollections} re-collections; transform: {Rejected} rejected, {ZeroQuantityExcluded} zero-quantity, {ConvertedToUtc} converted to UTC, {AssumedUtc} assumed UTC, {NormalizedSpellings} spellings normalized; load: {RecordsOut} records out; {DurationSeconds:0.0} s; trace {TraceId}")]
     private partial void LogManifest(string runId, string traceId, string outcome, string fingerprint, int recordsReceived, int distinctRecords, int collapsedDuplicates, int pageRefetches, int recollections, int rejected, int zeroQuantityExcluded, int convertedToUtc, int assumedUtc, int normalizedSpellings, int recordsOut, double durationSeconds);

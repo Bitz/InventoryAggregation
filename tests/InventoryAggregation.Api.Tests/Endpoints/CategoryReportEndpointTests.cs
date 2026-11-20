@@ -16,12 +16,13 @@ public sealed class CategoryReportEndpointTests
 
     [Fact]
     [Trait("Scenario", "category-report-endpoint/Healthy upstream")]
-    public async Task A_healthy_upstream_gives_200_with_a_summary_that_adds_up()
+    public async Task A_stored_report_gives_200_with_a_summary_that_adds_up()
     {
         var upstream = new FakeUpstream(TimeProvider.System);
         await using var api = new TestApi { Upstream = (request, _, _) => Task.FromResult(upstream.Respond(request)) };
+        var client = await api.StartedAsync();
 
-        using var response = await api.CreateClient().GetAsync(Route, Ct);
+        using var response = await client.GetAsync(Route, Ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
@@ -41,6 +42,7 @@ public sealed class CategoryReportEndpointTests
         Assert.Equal(7, summary.GetProperty("pagesFetched").GetInt32());
         Assert.Equal(8, summary.GetProperty("requests").GetInt32());
         Assert.EndsWith("Z", summary.GetProperty("generatedAt").GetString(), StringComparison.Ordinal);
+        Assert.Equal(["categories", "summary", "freshness"], root.EnumerateObject().Select(p => p.Name));
 
         foreach (var category in categories)
         {
@@ -53,6 +55,25 @@ public sealed class CategoryReportEndpointTests
             var mostRecent = category.GetProperty("mostRecentlyUpdated");
             Assert.Equal(["id", "name", "lastUpdated"], mostRecent.EnumerateObject().Select(p => p.Name));
         }
+    }
+
+    [Fact]
+    [Trait("Scenario", "category-report-endpoint/No upstream request")]
+    public async Task A_plain_request_is_answered_from_the_store()
+    {
+        var source = new FakePageSource(page => FakePageSource.Healthy(page));
+        await using var api = new TestApi { PageSource = source };
+        var client = await api.StartedAsync();
+        var calls = source.Calls.Count;
+
+        for (var i = 0; i < 3; i++)
+        {
+            using var response = await client.GetAsync(Route, Ct);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
+        Assert.Equal(8, calls);
+        Assert.Equal(calls, source.Calls.Count);
     }
 
     [Fact]
@@ -71,8 +92,9 @@ public sealed class CategoryReportEndpointTests
                 ? body
                 : """{"records":[],"page":2,"pageSize":25,"totalPages":1,"totalRecords":2}""")),
         };
+        var client = await api.StartedAsync();
 
-        var text = await api.CreateClient().GetStringAsync(Route, Ct);
+        var text = await client.GetStringAsync(Route, Ct);
 
         Assert.Contains("\"price\":0.005", text, StringComparison.Ordinal);
         Assert.Contains("\"price\":149.99", text, StringComparison.Ordinal);
@@ -80,101 +102,258 @@ public sealed class CategoryReportEndpointTests
     }
 
     [Fact]
-    [Trait("Scenario", "category-report-endpoint/Upstream down")]
-    public async Task An_unreachable_upstream_gives_502_upstream_unavailable()
+    [Trait("Scenario", "category-report-endpoint/Fresh report")]
+    public async Task The_age_is_in_the_body_and_the_age_header()
     {
-        await using var api = new TestApi { PageSource = new FakePageSource(page => FakePageSource.Fail(FailureKinds.UpstreamUnavailable, page)) };
+        await using var api = new TestApi { PageSource = new FakePageSource(page => FakePageSource.Healthy(page)) };
+        var client = await api.StartedAsync();
+        await api.ParkThenAdvanceAsync(TimeSpan.FromSeconds(42));
 
-        var problem = await GetProblemAsync(api, HttpStatusCode.BadGateway);
+        using var response = await client.GetAsync(Route, Ct);
+        var root = await ReadJsonAsync(response);
 
-        Assert.Equal(FailureKinds.UpstreamUnavailable, problem.GetProperty("kind").GetString());
-        Assert.Equal("urn:inventory-aggregation:upstream-unavailable", problem.GetProperty("type").GetString());
-        Assert.False(problem.TryGetProperty("categories", out _));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(TimeSpan.FromSeconds(42), response.Headers.Age);
+        var freshness = root.GetProperty("freshness");
+        Assert.Equal(42, freshness.GetProperty("ageSeconds").GetInt64());
+        Assert.Equal(root.GetProperty("summary").GetProperty("generatedAt").GetString(), freshness.GetProperty("asOf").GetString());
+        Assert.Equal("2026-11-20T15:04:05Z", freshness.GetProperty("asOf").GetString());
+        Assert.Equal("startup", freshness.GetProperty("trigger").GetString());
+        Assert.Equal("2026-11-20T15:09:05Z", freshness.GetProperty("nextRefreshAt").GetString());
     }
 
     [Fact]
-    [Trait("Scenario", "category-report-endpoint/Upstream throttling")]
-    public async Task Upstream_throttling_gives_503_with_retry_after()
+    [Trait("Scenario", "category-report-endpoint/Healthy refresh")]
+    public async Task After_a_good_refresh_the_report_is_neither_stale_nor_overdue()
     {
+        await using var api = new TestApi { PageSource = new FakePageSource(page => FakePageSource.Healthy(page)) };
+        var client = await api.StartedAsync();
+        await api.NextScheduledRefreshAsync();
+
+        var freshness = (await ReadJsonAsync(await client.GetAsync(Route, Ct))).GetProperty("freshness");
+
+        Assert.False(freshness.GetProperty("stale").GetBoolean());
+        Assert.False(freshness.GetProperty("overdue").GetBoolean());
+        Assert.Equal("scheduled", freshness.GetProperty("trigger").GetString());
+        var last = freshness.GetProperty("lastRefresh");
+        Assert.Equal("success", last.GetProperty("outcome").GetString());
+        Assert.Equal("2026-11-20T15:09:05Z", last.GetProperty("at").GetString());
+        Assert.False(last.TryGetProperty("detail", out _));
+        Assert.Equal("2026-11-20T15:14:05Z", freshness.GetProperty("nextRefreshAt").GetString());
+    }
+
+    [Fact]
+    [Trait("Scenario", "category-report-endpoint/Overdue report")]
+    public async Task A_report_older_than_stale_after_is_served_as_overdue()
+    {
+        var failing = false;
+        var source = new FakePageSource(page => Volatile.Read(ref failing)
+            ? FakePageSource.Fail(FailureKinds.UpstreamUnavailable, page)
+            : FakePageSource.Healthy(page));
+        await using var api = new TestApi { PageSource = source };
+        var client = await api.StartedAsync();
+        Volatile.Write(ref failing, true);
+
+        await api.ParkThenAdvanceAsync(TimeSpan.FromMinutes(61));
+        await FakeClock.Until(() => api.Store.Snapshot.IsStale && !api.Refresher.Status().IsRefreshing, "a failed refresh after an hour");
+        using var response = await client.GetAsync(Route, Ct);
+        var freshness = (await ReadJsonAsync(response)).GetProperty("freshness");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(freshness.GetProperty("overdue").GetBoolean());
+        Assert.True(freshness.GetProperty("stale").GetBoolean());
+        Assert.Equal(61 * 60, freshness.GetProperty("ageSeconds").GetInt64());
+    }
+
+    [Fact]
+    [Trait("Scenario", "category-report-endpoint/Upstream down after a good report")]
+    public async Task A_failed_refresh_after_a_good_one_serves_the_old_figures_as_stale()
+    {
+        var failing = false;
+        var source = new FakePageSource(page => Volatile.Read(ref failing)
+            ? FakePageSource.Fail(FailureKinds.UpstreamUnavailable, page)
+            : FakePageSource.Healthy(page));
+        await using var api = new TestApi { PageSource = source };
+        var client = await api.StartedAsync();
+        var before = await ReadJsonAsync(await client.GetAsync(Route, Ct));
+        Volatile.Write(ref failing, true);
+
+        await api.NextScheduledRefreshAsync();
+        using var response = await client.GetAsync(Route, Ct);
+        var after = await ReadJsonAsync(response);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(before.GetProperty("categories").GetRawText(), after.GetProperty("categories").GetRawText());
+        Assert.Equal(before.GetProperty("summary").GetRawText(), after.GetProperty("summary").GetRawText());
+        var freshness = after.GetProperty("freshness");
+        Assert.True(freshness.GetProperty("stale").GetBoolean());
+        Assert.Equal("startup", freshness.GetProperty("trigger").GetString());
+        var last = freshness.GetProperty("lastRefresh");
+        Assert.Equal(FailureKinds.UpstreamUnavailable, last.GetProperty("outcome").GetString());
+        Assert.Equal("2026-11-20T15:09:05Z", last.GetProperty("at").GetString());
+        Assert.False(string.IsNullOrEmpty(last.GetProperty("detail").GetString()));
+        Assert.Equal(300, freshness.GetProperty("ageSeconds").GetInt64());
+    }
+
+    [Fact]
+    [Trait("Scenario", "category-report-endpoint/Wrong key after a good report")]
+    public async Task A_rejected_key_after_a_good_report_is_stale_and_the_detail_has_no_key()
+    {
+        var upstream = new FakeUpstream(TimeProvider.System);
+        var rejecting = false;
         await using var api = new TestApi
         {
-            Upstream = (_, _, _) => Task.FromResult(ScriptedHttpHandler.Problem(HttpStatusCode.TooManyRequests, retryAfterSeconds: 120)),
+            Upstream = (request, _, _) => Task.FromResult(Volatile.Read(ref rejecting)
+                ? ScriptedHttpHandler.Problem(HttpStatusCode.Unauthorized)
+                : upstream.Respond(request)),
         };
+        var client = await api.StartedAsync();
+        Volatile.Write(ref rejecting, true);
 
-        using var response = await api.CreateClient().GetAsync(Route, Ct);
-
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
-        Assert.Equal(TimeSpan.FromSeconds(120), response.Headers.RetryAfter?.Delta);
-        var problem = await ReadProblemAsync(response);
-        Assert.Equal(FailureKinds.UpstreamThrottled, problem.GetProperty("kind").GetString());
-    }
-
-    [Fact]
-    [Trait("Scenario", "category-report-endpoint/Wrong key")]
-    public async Task A_rejected_key_gives_500_misconfigured_without_the_key()
-    {
-        await using var api = new TestApi { Upstream = (_, _, _) => Task.FromResult(ScriptedHttpHandler.Problem(HttpStatusCode.Unauthorized)) };
-
-        using var response = await api.CreateClient().GetAsync(Route, Ct);
+        await api.NextScheduledRefreshAsync();
+        using var response = await client.GetAsync(Route, Ct);
         var text = await response.Content.ReadAsStringAsync(Ct);
 
-        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
-        Assert.Equal(FailureKinds.UpstreamMisconfigured, JsonDocument.Parse(text).RootElement.GetProperty("kind").GetString());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var freshness = JsonDocument.Parse(text).RootElement.GetProperty("freshness");
+        Assert.True(freshness.GetProperty("stale").GetBoolean());
+        Assert.Equal(FailureKinds.UpstreamMisconfigured, freshness.GetProperty("lastRefresh").GetProperty("outcome").GetString());
+        Assert.Contains("401", freshness.GetProperty("lastRefresh").GetProperty("detail").GetString(), StringComparison.Ordinal);
         Assert.DoesNotContain(ClientHarness.ApiKey, text, StringComparison.Ordinal);
         Assert.DoesNotContain("inventory.test", text, StringComparison.Ordinal);
     }
 
     [Fact]
-    [Trait("Scenario", "category-report-endpoint/Data does not reconcile")]
-    public async Task An_incomplete_dataset_gives_502_with_both_counts_and_no_categories()
+    [Trait("Scenario", "category-report-endpoint/Wrong key at startup")]
+    public async Task A_rejected_key_from_the_start_gives_503_report_not_ready_without_the_key()
     {
-        // Page 3 repeats page 2's last record in place of its own last one, on every pass.
-        var source = new FakePageSource(page =>
-        {
-            var result = FakePageSource.Healthy(page);
-            if (page != 3)
-            {
-                return result;
-            }
+        await using var api = new TestApi { Upstream = (_, _, _) => Task.FromResult(ScriptedHttpHandler.Problem(HttpStatusCode.Unauthorized)) };
+        var client = await api.StartedAsync();
 
-            var previousLast = FakePageSource.Healthy(2).Page!.Records[^1];
-            return PageResult.Success(result.Page! with { Records = [previousLast, .. result.Page!.Records.Take(24)] }, 1);
-        });
-        await using var api = new TestApi { PageSource = source };
+        using var response = await client.GetAsync(Route, Ct);
+        var text = await response.Content.ReadAsStringAsync(Ct);
 
-        var problem = await GetProblemAsync(api, HttpStatusCode.BadGateway);
-
-        Assert.Equal(FailureKinds.IncompleteDataset, problem.GetProperty("kind").GetString());
-        var detail = problem.GetProperty("detail").GetString()!;
-        Assert.Contains("157", detail, StringComparison.Ordinal);
-        Assert.Contains("156", detail, StringComparison.Ordinal);
-        Assert.Equal(157, problem.GetProperty("expectedCount").GetInt32());
-        Assert.Equal(156, problem.GetProperty("collectedCount").GetInt32());
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        var problem = JsonDocument.Parse(text).RootElement;
+        Assert.Equal(FailureKinds.ReportNotReady, problem.GetProperty("kind").GetString());
+        Assert.Equal("urn:inventory-aggregation:report-not-ready", problem.GetProperty("type").GetString());
+        Assert.Equal(503, problem.GetProperty("status").GetInt32());
+        Assert.False(string.IsNullOrEmpty(problem.GetProperty("title").GetString()));
+        Assert.Contains(FailureKinds.UpstreamMisconfigured, problem.GetProperty("detail").GetString(), StringComparison.Ordinal);
+        Assert.False(string.IsNullOrEmpty(problem.GetProperty("traceId").GetString()));
+        var last = problem.GetProperty("lastRefresh");
+        Assert.Equal(FailureKinds.UpstreamMisconfigured, last.GetProperty("outcome").GetString());
+        Assert.Equal("2026-11-20T15:04:05Z", last.GetProperty("at").GetString());
         Assert.False(problem.TryGetProperty("categories", out _));
+        Assert.DoesNotContain(ClientHarness.ApiKey, text, StringComparison.Ordinal);
+        Assert.DoesNotContain("inventory.test", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(" at ", text, StringComparison.Ordinal);
     }
 
     [Fact]
-    [Trait("Scenario", "category-report-endpoint/Deadline")]
-    public async Task Exceeding_the_collection_timeout_gives_504()
+    [Trait("Scenario", "category-report-endpoint/Forced report with nothing stored")]
+    public async Task A_failed_forced_collection_with_nothing_stored_gives_503()
     {
+        var source = new FakePageSource(page => FakePageSource.Fail(FailureKinds.UpstreamUnavailable, page));
+        await using var api = new TestApi { PageSource = source };
+        var client = await api.StartedAsync();
+        var calls = source.Calls.Count;
+        await api.ParkThenAdvanceAsync(TimeSpan.FromSeconds(5));
+
+        using var response = await client.GetAsync($"{Route}?fresh=true", Ct);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        var problem = await ReadProblemAsync(response);
+        Assert.Equal(FailureKinds.ReportNotReady, problem.GetProperty("kind").GetString());
+        var last = problem.GetProperty("lastRefresh");
+        Assert.Equal(FailureKinds.UpstreamUnavailable, last.GetProperty("outcome").GetString());
+        Assert.Equal("2026-11-20T15:04:10Z", last.GetProperty("at").GetString());
+        Assert.True(source.Calls.Count > calls, "the forced request ran a collection");
+    }
+
+    [Fact]
+    [Trait("Scenario", "category-report-endpoint/Request during the startup refresh")]
+    public async Task A_request_while_the_first_refresh_runs_gets_503_with_retry_after_the_window()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var source = new FakePageSource(async (page, _, token) =>
         {
             if (page == 2)
             {
-                await Task.Delay(Timeout.Infinite, token);
+                await release.Task.WaitAsync(token);
             }
 
             return FakePageSource.Healthy(page);
         });
         await using var api = new TestApi { PageSource = source };
         var client = api.CreateClient();
+        await FakeClock.Until(() => source.Calls.Contains(2), "the startup refresh to be collecting");
 
-        var request = client.GetAsync(Route, Ct);
-        await FakeClock.Until(() => source.Calls.Contains(2), "page 2 to be requested");
-        var response = await FakeClock.Drive(api.Time, request, TimeSpan.FromSeconds(5));
+        using var response = await client.GetAsync(Route, Ct);
 
-        Assert.Equal(HttpStatusCode.GatewayTimeout, response.StatusCode);
-        Assert.Equal(FailureKinds.UpstreamTimeout, (await ReadProblemAsync(response)).GetProperty("kind").GetString());
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(TimeSpan.FromSeconds(10), response.Headers.RetryAfter?.Delta);
+        var problem = await ReadProblemAsync(response);
+        Assert.Equal(FailureKinds.ReportNotReady, problem.GetProperty("kind").GetString());
+        Assert.False(problem.TryGetProperty("lastRefresh", out _));
+        release.SetResult();
+    }
+
+    [Fact]
+    [Trait("Scenario", "category-report-endpoint/Between failed attempts")]
+    public async Task Between_failed_attempts_retry_after_is_the_time_to_the_next_plus_the_window()
+    {
+        await using var api = new TestApi { PageSource = new FakePageSource(page => FakePageSource.Fail(FailureKinds.UpstreamUnavailable, page)) };
+        var client = await api.StartedAsync();
+        await api.ParkThenAdvanceAsync(TimeSpan.FromSeconds(5));
+
+        using var response = await client.GetAsync(Route, Ct);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(TimeSpan.FromSeconds(35), response.Headers.RetryAfter?.Delta);
+    }
+
+    [Fact]
+    [Trait("Scenario", "category-report-endpoint/Caller disconnects during a forced collection")]
+    public async Task A_forced_caller_that_leaves_stops_waiting_and_the_collection_carries_on()
+    {
+        var hold = false;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = 0;
+        var source = new FakePageSource(async (page, _, token) =>
+        {
+            if (page == 2 && Volatile.Read(ref hold))
+            {
+                try
+                {
+                    await release.Task.WaitAsync(token);
+                }
+                catch (OperationCanceledException)
+                {
+                    Interlocked.Increment(ref cancelled);
+                    throw;
+                }
+            }
+
+            return FakePageSource.Healthy(page);
+        });
+        await using var api = new TestApi { PageSource = source };
+        var client = await api.StartedAsync();
+        Volatile.Write(ref hold, true);
+        await api.ParkThenAdvanceAsync(TimeSpan.FromMinutes(2));
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+
+        var request = client.GetAsync($"{Route}?fresh=true", caller.Token);
+        await FakeClock.Until(() => source.Calls.Count(p => p == 2) == 2, "the forced collection to be fetching pages");
+        await caller.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
+        release.SetResult();
+        await FakeClock.Until(() => api.Store.Snapshot.Latest?.Trigger == Core.Reporting.RefreshTrigger.Fresh, "the forced collection to store its report");
+
+        Assert.Equal(0, Volatile.Read(ref cancelled));
+        Assert.Equal(16, source.Calls.Count);
+        Assert.DoesNotContain(api.Logs.GetSnapshot(), r => r.Level >= LogLevel.Error);
     }
 
     [Fact]
@@ -182,8 +361,9 @@ public sealed class CategoryReportEndpointTests
     public async Task An_unhandled_exception_gives_500_problem_details_without_a_stack_trace()
     {
         await using var api = new TestApi { PageSource = new FakePageSource(_ => throw new InvalidOperationException("internal detail that must not leak")) };
+        var client = await api.StartedAsync();
 
-        using var response = await api.CreateClient().GetAsync(Route, Ct);
+        using var response = await client.GetAsync($"{Route}?fresh=true", Ct);
         var text = await response.Content.ReadAsStringAsync(Ct);
 
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
@@ -204,79 +384,77 @@ public sealed class CategoryReportEndpointTests
             Environment = "Development",
             PageSource = new FakePageSource(_ => throw new InvalidOperationException("visible in development")),
         };
+        var client = await api.StartedAsync();
 
-        using var response = await api.CreateClient().GetAsync(Route, Ct);
+        using var response = await client.GetAsync($"{Route}?fresh=true", Ct);
 
         Assert.Contains("visible in development", await response.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
     }
 
     [Fact]
-    [Trait("Scenario", "category-report-endpoint/Caller disconnects mid-collection")]
-    public async Task A_caller_that_leaves_cancels_upstream_work_without_logging_an_error()
+    public async Task An_unreadable_fresh_value_gives_400()
     {
-        var cancelled = 0;
-        var source = new FakePageSource(async (page, _, token) =>
-        {
-            if (page > 1)
-            {
-                try
-                {
-                    await Task.Delay(Timeout.Infinite, token);
-                }
-                catch (OperationCanceledException)
-                {
-                    Interlocked.Increment(ref cancelled);
-                    throw;
-                }
-            }
+        await using var api = new TestApi { PageSource = new FakePageSource(page => FakePageSource.Healthy(page)) };
+        var client = await api.StartedAsync();
 
-            return FakePageSource.Healthy(page);
-        });
-        await using var api = new TestApi { PageSource = source };
-        using var caller = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        using var response = await client.GetAsync($"{Route}?fresh=maybe", Ct);
 
-        var request = api.CreateClient().GetAsync(Route, caller.Token);
-        await FakeClock.Until(() => source.Calls.Count == 5, "four pages to be in flight");
-        await caller.CancelAsync();
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
-        await FakeClock.Until(() => Volatile.Read(ref cancelled) == 4, "every in-flight page to be cancelled");
-        Assert.DoesNotContain(api.Logs.GetSnapshot(), r => r.Level >= LogLevel.Error);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
-    public static TheoryData<string> AllKinds() =>
-        [.. typeof(FailureKinds).GetFields(BindingFlags.Public | BindingFlags.Static).Select(f => (string)f.GetRawConstantValue()!)];
+    /// <summary>Every kind a collection can end with (design.md §5); <c>report-not-ready</c> is the endpoint's own.</summary>
+    public static TheoryData<string> CollectionKinds() =>
+        [.. typeof(FailureKinds).GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Select(f => (string)f.GetRawConstantValue()!)
+            .Where(k => k != FailureKinds.ReportNotReady)];
 
     [Theory]
-    [MemberData(nameof(AllKinds))]
+    [MemberData(nameof(CollectionKinds))]
     [Trait("Scenario", "category-report-endpoint/Endpoint tests with a fake service")]
-    public async Task Each_failure_kind_maps_to_its_status(string kind)
+    public async Task Each_failure_kind_after_a_good_report_is_200_stale(string kind)
     {
-        var expected = kind switch
-        {
-            FailureKinds.UpstreamThrottled => HttpStatusCode.ServiceUnavailable,
-            FailureKinds.UpstreamTimeout => HttpStatusCode.GatewayTimeout,
-            FailureKinds.UpstreamMisconfigured or FailureKinds.InternalError => HttpStatusCode.InternalServerError,
-            _ => HttpStatusCode.BadGateway,
-        };
+        var failing = false;
+        var source = new FakePageSource(page => Volatile.Read(ref failing)
+            ? FakePageSource.Fail(kind, page, retryAfter: TimeSpan.FromSeconds(3))
+            : FakePageSource.Healthy(page));
+        await using var api = new TestApi { PageSource = source };
+        var client = await api.StartedAsync();
+        Volatile.Write(ref failing, true);
+        await api.NextScheduledRefreshAsync();
+
+        using var response = await client.GetAsync(Route, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var root = await ReadJsonAsync(response);
+        Assert.NotEmpty(root.GetProperty("categories").EnumerateArray());
+        var freshness = root.GetProperty("freshness");
+        Assert.True(freshness.GetProperty("stale").GetBoolean());
+        Assert.Equal(kind, freshness.GetProperty("lastRefresh").GetProperty("outcome").GetString());
+    }
+
+    [Theory]
+    [MemberData(nameof(CollectionKinds))]
+    [Trait("Scenario", "category-report-endpoint/Endpoint tests with a fake service")]
+    public async Task Each_failure_kind_with_no_good_report_is_503_report_not_ready(string kind)
+    {
         await using var api = new TestApi { PageSource = new FakePageSource(page => FakePageSource.Fail(kind, page, retryAfter: TimeSpan.FromSeconds(3))) };
+        var client = await api.StartedAsync();
 
-        using var response = await api.CreateClient().GetAsync(Route, Ct);
+        using var response = await client.GetAsync(Route, Ct);
 
-        Assert.Equal(expected, response.StatusCode);
-        Assert.Equal((int)expected, FailureResponses.StatusFor(kind));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         var problem = await ReadProblemAsync(response);
-        Assert.Equal(kind, problem.GetProperty("kind").GetString());
-        Assert.Equal($"urn:inventory-aggregation:{kind}", problem.GetProperty("type").GetString());
-        Assert.Equal((int)expected, problem.GetProperty("status").GetInt32());
-        Assert.False(string.IsNullOrEmpty(problem.GetProperty("title").GetString()));
-        Assert.False(string.IsNullOrEmpty(problem.GetProperty("traceId").GetString()));
+        Assert.Equal(FailureKinds.ReportNotReady, problem.GetProperty("kind").GetString());
+        Assert.Equal(kind, problem.GetProperty("lastRefresh").GetProperty("outcome").GetString());
+        Assert.False(problem.TryGetProperty("categories", out _));
     }
 
     [Fact]
-    public void Every_failure_kind_has_a_mapping()
+    public void Only_the_two_response_kinds_have_a_status()
     {
-        Assert.Equal(AllKinds().Select(k => k.Data).Order(), FailureResponses.Kinds.Order());
+        Assert.Equal([FailureKinds.InternalError, FailureKinds.ReportNotReady], FailureResponses.Kinds.Order());
+        Assert.Equal(503, FailureResponses.StatusFor(FailureKinds.ReportNotReady));
+        Assert.Equal(500, FailureResponses.StatusFor(FailureKinds.InternalError));
     }
 
     [Fact]
@@ -296,8 +474,11 @@ public sealed class CategoryReportEndpointTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
-        var responses = document.RootElement.GetProperty("paths").GetProperty(Route).GetProperty("get").GetProperty("responses");
-        Assert.Equal(["200", "500", "502", "503", "504"], responses.EnumerateObject().Select(p => p.Name).Order());
+        var operation = document.RootElement.GetProperty("paths").GetProperty(Route).GetProperty("get");
+        Assert.Equal(["200", "400", "500", "503"], operation.GetProperty("responses").EnumerateObject().Select(p => p.Name).Order());
+        var parameters = operation.GetProperty("parameters").EnumerateArray().ToList();
+        Assert.Equal(["fresh", "include"], parameters.Select(p => p.GetProperty("name").GetString()).Order());
+        Assert.All(parameters, p => Assert.Equal("query", p.GetProperty("in").GetString()));
     }
 
     [Theory]
@@ -314,139 +495,13 @@ public sealed class CategoryReportEndpointTests
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
-    [Fact]
-    [Trait("Scenario", "category-report-endpoint/Two callers at once")]
-    public async Task Two_callers_at_once_share_one_collection_and_get_the_same_report()
+    private static async Task<JsonElement> ReadJsonAsync(HttpResponseMessage response)
     {
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var source = new FakePageSource(async (page, _, token) =>
+        using (response)
         {
-            if (page == 2)
-            {
-                await release.Task.WaitAsync(token);
-            }
-
-            return FakePageSource.Healthy(page);
-        });
-        await using var api = new TestApi { PageSource = source };
-        var client = api.CreateClient();
-
-        var first = client.GetAsync(Route, Ct);
-        await FakeClock.Until(() => source.Calls.Contains(2), "the first collection to be running");
-        var second = client.GetAsync(Route, Ct);
-        await FakeClock.Until(() => api.Logs.GetSnapshot().Any(r => r.Message.Contains("joining it", StringComparison.Ordinal)), "the second caller to join");
-        release.SetResult();
-
-        using var a = await first;
-        using var b = await second;
-        Assert.Equal(HttpStatusCode.OK, a.StatusCode);
-        Assert.Equal(HttpStatusCode.OK, b.StatusCode);
-        Assert.Equal(await a.Content.ReadAsStringAsync(Ct), await b.Content.ReadAsStringAsync(Ct));
-        Assert.Equal(1, source.Calls.Count(p => p == 1));
-        Assert.Equal(8, source.Calls.Count);
-    }
-
-    [Fact]
-    [Trait("Scenario", "category-report-endpoint/Shared failure")]
-    public async Task Two_callers_sharing_a_failed_collection_get_the_same_502()
-    {
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var source = new FakePageSource(async (page, _, token) =>
-        {
-            if (page == 2)
-            {
-                await release.Task.WaitAsync(token);
-                return PageResult.Success(FakePageSource.Healthy(2).Page! with { TotalRecords = 160 }, 1);
-            }
-
-            return FakePageSource.Healthy(page);
-        });
-        await using var api = new TestApi { PageSource = source };
-        var client = api.CreateClient();
-
-        var first = client.GetAsync(Route, Ct);
-        await FakeClock.Until(() => source.Calls.Contains(2), "the first collection to be running");
-        var second = client.GetAsync(Route, Ct);
-        await FakeClock.Until(() => api.Logs.GetSnapshot().Any(r => r.Message.Contains("joining it", StringComparison.Ordinal)), "the second caller to join");
-        release.SetResult();
-
-        using var a = await first;
-        using var b = await second;
-        Assert.Equal(HttpStatusCode.BadGateway, a.StatusCode);
-        Assert.Equal(HttpStatusCode.BadGateway, b.StatusCode);
-        var pa = await ReadProblemAsync(a);
-        var pb = await ReadProblemAsync(b);
-        Assert.Equal(FailureKinds.InconsistentPaging, pa.GetProperty("kind").GetString());
-        foreach (var field in new[] { "type", "title", "status", "detail", "kind", "page" })
-        {
-            Assert.Equal(pa.GetProperty(field).ToString(), pb.GetProperty(field).ToString());
+            Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+            return JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct)).RootElement.Clone();
         }
-    }
-
-    [Fact]
-    [Trait("Scenario", "category-report-endpoint/One caller leaves")]
-    public async Task When_one_of_two_callers_leaves_the_collection_continues_for_the_other()
-    {
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var cancelled = 0;
-        var source = new FakePageSource(async (page, _, token) =>
-        {
-            if (page == 2)
-            {
-                try
-                {
-                    await release.Task.WaitAsync(token);
-                }
-                catch (OperationCanceledException)
-                {
-                    Interlocked.Increment(ref cancelled);
-                    throw;
-                }
-            }
-
-            return FakePageSource.Healthy(page);
-        });
-        await using var api = new TestApi { PageSource = source };
-        var client = api.CreateClient();
-        using var leaver = CancellationTokenSource.CreateLinkedTokenSource(Ct);
-
-        var first = client.GetAsync(Route, leaver.Token);
-        await FakeClock.Until(() => source.Calls.Contains(2), "the first collection to be running");
-        var second = client.GetAsync(Route, Ct);
-        await FakeClock.Until(() => api.Logs.GetSnapshot().Any(r => r.Message.Contains("joining it", StringComparison.Ordinal)), "the second caller to join");
-        await leaver.CancelAsync();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
-        release.SetResult();
-
-        using var b = await second;
-        Assert.Equal(HttpStatusCode.OK, b.StatusCode);
-        Assert.Equal(0, cancelled);
-        Assert.Equal(1, source.Calls.Count(p => p == 1));
-    }
-
-    [Fact]
-    [Trait("Scenario", "category-report-endpoint/Caller after completion")]
-    public async Task A_caller_after_completion_starts_a_new_collection()
-    {
-        var source = new FakePageSource(page => FakePageSource.Healthy(page));
-        await using var api = new TestApi { PageSource = source };
-        var client = api.CreateClient();
-
-        var first = await client.GetStringAsync(Route, Ct);
-        api.Time.Advance(TimeSpan.FromMinutes(1));
-        var second = await client.GetStringAsync(Route, Ct);
-
-        Assert.Equal(2, source.Calls.Count(p => p == 1));
-        Assert.NotEqual(
-            JsonDocument.Parse(first).RootElement.GetProperty("summary").GetProperty("generatedAt").GetString(),
-            JsonDocument.Parse(second).RootElement.GetProperty("summary").GetProperty("generatedAt").GetString());
-    }
-
-    private static async Task<JsonElement> GetProblemAsync(TestApi api, HttpStatusCode expected)
-    {
-        using var response = await api.CreateClient().GetAsync(Route, Ct);
-        Assert.Equal(expected, response.StatusCode);
-        return await ReadProblemAsync(response);
     }
 
     private static async Task<JsonElement> ReadProblemAsync(HttpResponseMessage response)

@@ -129,8 +129,9 @@ public sealed class ServiceConfigurationTests
             var upstream = new FakeUpstream(TimeProvider.System);
             await using var api = new TestApi { Upstream = (request, _, _) => Task.FromResult(upstream.Respond(request)) };
             api.Settings.Remove("InventoryApi:ApiKey");
+            var client = await api.StartedAsync();
 
-            using var response = await api.CreateClient().GetAsync("/api/inventory/categories", Ct);
+            using var response = await client.GetAsync("/api/inventory/categories", Ct);
 
             Assert.True(response.IsSuccessStatusCode);
             Assert.All(api.UpstreamHandler!.Requests, r => Assert.Equal([value], r.Headers["X-Api-Key"]));
@@ -155,7 +156,8 @@ public sealed class ServiceConfigurationTests
         api.Settings["Logging:LogLevel:Default"] = "Trace";
         api.Settings["Logging:LogLevel:Microsoft.AspNetCore"] = "Trace";
 
-        using var response = await FakeClock.Drive(api.Time, api.CreateClient().GetAsync("/api/inventory/categories", Ct));
+        var client = await api.StartedDrivingClockAsync();
+        using var response = await client.GetAsync("/api/inventory/categories", Ct);
 
         Assert.True(response.IsSuccessStatusCode);
         var logs = api.Logs.GetSnapshot();
@@ -175,8 +177,9 @@ public sealed class ServiceConfigurationTests
     {
         var fake = new FakePageSource(page => FakePageSource.Healthy(page));
         await using var api = new TestApi { PageSource = fake };
+        var client = await api.StartedAsync();
 
-        using var response = await api.CreateClient().GetAsync("/api/inventory/categories", Ct);
+        using var response = await client.GetAsync("/api/inventory/categories", Ct);
 
         Assert.True(response.IsSuccessStatusCode);
         using var scope = api.Services.CreateScope();
@@ -186,7 +189,10 @@ public sealed class ServiceConfigurationTests
         Assert.IsType<RecordValidator>(services.GetRequiredService<RecordValidator>());
         Assert.IsType<CategoryAggregator>(services.GetRequiredService<CategoryAggregator>());
         Assert.IsType<InventoryReportService>(services.GetRequiredService<InventoryReportService>());
-        Assert.Same(api.Time, services.GetRequiredService<TimeProvider>());
+        Assert.IsType<ReportStore>(services.GetRequiredService<ReportStore>());
+        Assert.IsType<ReportRefresher>(services.GetRequiredService<ReportRefresher>());
+        Assert.Contains(services.GetServices<Microsoft.Extensions.Hosting.IHostedService>(), s => s is ReportRefreshService);
+        Assert.Same(api.Clock, services.GetRequiredService<TimeProvider>());
         Assert.NotEmpty(fake.Calls);
     }
 

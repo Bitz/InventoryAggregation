@@ -16,7 +16,7 @@ public sealed class InventoryReportServiceTests
         data.Records[98] = data.Records[98] with { Price = -4m }; // id 1099
         await using var services = Components.ReportServices(new ScriptedPageSource(data.Healthy()));
 
-        var result = await services.GetRequiredService<InventoryReportService>().GetReportAsync(Ct);
+        var result = await services.GetRequiredService<InventoryReportService>().BuildReportAsync(RefreshTrigger.Scheduled, Ct);
 
         Assert.True(result.IsSuccess);
         var rejected = Assert.Single(result.Report.Summary.RejectedRecords);
@@ -36,7 +36,7 @@ public sealed class InventoryReportServiceTests
             new ScriptedPageSource(data.Healthy()),
             new InventoryReportSettings { InvalidRecordPolicy = InvalidRecordPolicy.Fail });
 
-        var result = await services.GetRequiredService<InventoryReportService>().GetReportAsync(Ct);
+        var result = await services.GetRequiredService<InventoryReportService>().BuildReportAsync(RefreshTrigger.Scheduled, Ct);
 
         Assert.False(result.IsSuccess);
         Assert.Null(result.Report);
@@ -57,7 +57,7 @@ public sealed class InventoryReportServiceTests
         data.Records[5] = data.Records[5] with { Name = " " };
         await using var services = Components.ReportServices(new ScriptedPageSource(data.Healthy()));
 
-        var result = await services.GetRequiredService<InventoryReportService>().GetReportAsync(Ct);
+        var result = await services.GetRequiredService<InventoryReportService>().BuildReportAsync(RefreshTrigger.Scheduled, Ct);
 
         Assert.True(result.IsSuccess);
         var summary = result.Report.Summary;

@@ -20,8 +20,9 @@ public sealed class DataLineageTests
     public async Task Include_audit_adds_the_run_lineage()
     {
         await using var api = WithFakeUpstream(out _);
+        var client = await api.StartedAsync();
 
-        var audit = await GetAuditAsync(api);
+        var audit = await GetAuditAsync(client);
 
         Assert.Equal(["runId", "startedAt", "finishedAt", "fingerprint", "extract", "transform", "load"], audit.EnumerateObject().Select(p => p.Name));
         Assert.Matches("^[0-9a-f]{6}$", audit.GetProperty("runId").GetString());
@@ -36,8 +37,9 @@ public sealed class DataLineageTests
     public async Task Without_include_there_is_no_audit()
     {
         await using var api = WithFakeUpstream(out _);
+        var client = await api.StartedAsync();
 
-        var body = await api.CreateClient().GetStringAsync(Route, Ct);
+        var body = await client.GetStringAsync(Route, Ct);
 
         Assert.False(JsonDocument.Parse(body).RootElement.TryGetProperty("audit", out _));
     }
@@ -47,8 +49,9 @@ public sealed class DataLineageTests
     public async Task Each_page_overlap_is_listed_with_both_pages()
     {
         await using var api = WithFakeUpstream(out _);
+        var client = await api.StartedAsync();
 
-        var extract = (await GetAuditAsync(api)).GetProperty("extract");
+        var extract = (await GetAuditAsync(client)).GetProperty("extract");
 
         var collapsed = extract.GetProperty("collapsedDuplicates").EnumerateArray()
             .Select(d => (d.GetProperty("id").GetInt64(), string.Join(",", d.GetProperty("pages").EnumerateArray().Select(p => p.GetInt32()))))
@@ -71,8 +74,9 @@ public sealed class DataLineageTests
                 : result;
         });
         await using var api = new TestApi { PageSource = source };
+        var client = await api.StartedAsync();
 
-        var refetch = Assert.Single((await GetAuditAsync(api)).GetProperty("extract").GetProperty("pageRefetches").EnumerateArray());
+        var refetch = Assert.Single((await GetAuditAsync(client)).GetProperty("extract").GetProperty("pageRefetches").EnumerateArray());
 
         Assert.Equal(3, refetch.GetProperty("page").GetInt32());
         Assert.Equal("holds 24 records, expected at least 25", refetch.GetProperty("reason").GetString());
@@ -89,11 +93,9 @@ public sealed class DataLineageTests
             ? FakePageSource.Fail(FailureKinds.UpstreamUnavailable, page)
             : FakePageSource.Healthy(page));
         await using var api = new TestApi { PageSource = source };
-        var client = api.CreateClient();
-
-        (await client.GetAsync(Route, Ct)).Dispose();
+        await api.StartedAsync();
         Volatile.Write(ref failing, true);
-        (await client.GetAsync(Route, Ct)).Dispose();
+        await api.NextScheduledRefreshAsync();
 
         var manifests = api.Logs.GetSnapshot().Where(r => r.Id.Name is "RunManifest" or "RunManifestWithoutData").ToList();
         Assert.Equal(2, manifests.Count);
@@ -109,24 +111,63 @@ public sealed class DataLineageTests
     }
 
     [Fact]
+    [Trait("Scenario", "data-lineage/Audit of a stale report")]
+    public async Task A_stale_report_carries_the_audit_of_the_run_that_produced_it()
+    {
+        var failing = false;
+        var source = new FakePageSource(page => Volatile.Read(ref failing)
+            ? FakePageSource.Fail(FailureKinds.UpstreamUnavailable, page)
+            : FakePageSource.Healthy(page));
+        await using var api = new TestApi { PageSource = source };
+        var client = await api.StartedAsync();
+        var before = await GetAuditAsync(client);
+        Volatile.Write(ref failing, true);
+
+        await api.NextScheduledRefreshAsync();
+        var body = JsonDocument.Parse(await client.GetStringAsync($"{Route}?include=audit", Ct)).RootElement;
+        var after = body.GetProperty("audit");
+
+        Assert.True(body.GetProperty("freshness").GetProperty("stale").GetBoolean());
+        Assert.Equal(before.GetProperty("runId").GetString(), after.GetProperty("runId").GetString());
+        Assert.Equal(before.GetProperty("finishedAt").GetString(), after.GetProperty("finishedAt").GetString());
+        Assert.Equal("2026-11-20T15:04:05Z", after.GetProperty("finishedAt").GetString());
+    }
+
+    [Fact]
     [Trait("Scenario", "data-lineage/Data-quality counters")]
     public async Task Rejects_by_reason_and_collapsed_duplicates_are_counted()
     {
-        await using var api = WithFakeUpstream(out var upstream);
+        var upstream = new FakeUpstream(TimeProvider.System);
         upstream.Records[98]["price"] = -4.5m;
-        var meters = api.Services.GetRequiredService<IMeterFactory>();
-        using var rejected = new MetricCollector<long>(meters, InventoryTelemetry.Name, "inventory.records.rejected");
-        using var collapsed = new MetricCollector<long>(meters, InventoryTelemetry.Name, "inventory.records.duplicates_collapsed");
-        using var normalized = new MetricCollector<long>(meters, InventoryTelemetry.Name, "inventory.records.spellings_normalized");
+        MetricCollector<long>? rejected = null;
+        MetricCollector<long>? collapsed = null;
+        MetricCollector<long>? normalized = null;
+        await using var api = new TestApi
+        {
+            Upstream = (request, _, _) => Task.FromResult(upstream.Respond(request)),
+            BeforeStart = services =>
+            {
+                var meters = services.GetRequiredService<IMeterFactory>();
+                rejected = new MetricCollector<long>(meters, InventoryTelemetry.Name, "inventory.records.rejected");
+                collapsed = new MetricCollector<long>(meters, InventoryTelemetry.Name, "inventory.records.duplicates_collapsed");
+                normalized = new MetricCollector<long>(meters, InventoryTelemetry.Name, "inventory.records.spellings_normalized");
+            },
+        };
+        var client = await api.StartedAsync();
 
-        using var response = await api.CreateClient().GetAsync(Route, Ct);
+        using var response = await client.GetAsync(Route, Ct);
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var reject = Assert.Single(rejected.GetMeasurementSnapshot());
-        Assert.Equal(1, reject.Value);
-        Assert.Equal("price is negative", reject.Tags["inventory.rejection.reason"]);
-        Assert.Equal(3, collapsed.GetMeasurementSnapshot().Sum(m => m.Value));
-        Assert.True(normalized.GetMeasurementSnapshot().Sum(m => m.Value) > 0);
+        using (rejected)
+        using (collapsed)
+        using (normalized)
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var reject = Assert.Single(rejected!.GetMeasurementSnapshot());
+            Assert.Equal(1, reject.Value);
+            Assert.Equal("price is negative", reject.Tags["inventory.rejection.reason"]);
+            Assert.Equal(3, collapsed!.GetMeasurementSnapshot().Sum(m => m.Value));
+            Assert.True(normalized!.GetMeasurementSnapshot().Sum(m => m.Value) > 0);
+        }
     }
 
     private static TestApi WithFakeUpstream(out FakeUpstream upstream)
@@ -136,9 +177,9 @@ public sealed class DataLineageTests
         return new TestApi { Upstream = (request, _, _) => Task.FromResult(fake.Respond(request)) };
     }
 
-    private static async Task<JsonElement> GetAuditAsync(TestApi api)
+    private static async Task<JsonElement> GetAuditAsync(HttpClient client)
     {
-        var body = await api.CreateClient().GetStringAsync($"{Route}?include=audit", Ct);
+        var body = await client.GetStringAsync($"{Route}?include=audit", Ct);
         return JsonDocument.Parse(body).RootElement.GetProperty("audit").Clone();
     }
 }
