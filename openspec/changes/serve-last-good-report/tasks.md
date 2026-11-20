@@ -44,7 +44,7 @@ aggregator, upstream client, rate limiter) should change; if it has to, stop and
 - [x] Endpoint tests per collection failure kind: `200` stale after a good report, `503` with none.
 - [x] Refresher tests on `FakeTimeProvider`: schedule, backoff, floor, sharing, schedule not moved by a
       forced refresh, shutdown. No test waits on real time.
-- [ ] Fake upstream: a way to switch the fault mode while running (or a mode that fails after N good
+- [x] Fake upstream: a way to switch the fault mode while running (or a mode that fails after N good
       collections) so the stale path can be shown by hand.
 
 ## 6. Documentation
