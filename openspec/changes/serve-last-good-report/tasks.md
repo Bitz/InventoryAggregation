@@ -48,7 +48,7 @@ aggregator, upstream client, rate limiter) should change; if it has to, stop and
       collections) so the stale path can be shown by hand.
 
 ## 6. Documentation
-- [ ] README: the endpoint section (freshness block, `fresh=true`, `Age`, the one `503`), status table,
+- [x] README: the endpoint section (freshness block, `fresh=true`, `Age`, the one `503`), status table,
       assumptions (D27–D36 in plain words), and limitations: in memory only (restart gap), each instance
       refreshes on its own, figures up to `RefreshInterval` old when healthy. Replace the "Built for
       on-demand use on one instance" and "No caching, no persistence, no last-good fallback" items.
