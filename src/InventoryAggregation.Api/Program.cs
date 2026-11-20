@@ -16,6 +16,14 @@ app.UseExceptionHandler();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+
+    // Swagger UI renders the built-in document; it does not generate one of its own.
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/openapi/v1.json", "Inventory Aggregation Service");
+        options.RoutePrefix = "swagger";
+        options.DocumentTitle = "Inventory Aggregation Service";
+    });
 }
 
 app.MapCategoryReport();

@@ -281,11 +281,18 @@ public sealed class CategoryReportEndpointTests
 
     [Fact]
     [Trait("Scenario", "category-report-endpoint/Development")]
-    public async Task The_openapi_document_is_served_in_development()
+    public async Task The_openapi_document_and_swagger_ui_are_served_in_development()
     {
         await using var api = new TestApi { Environment = "Development", PageSource = new FakePageSource(page => FakePageSource.Healthy(page)) };
+        var client = api.CreateClient();
 
-        using var response = await api.CreateClient().GetAsync("/openapi/v1.json", Ct);
+        using var ui = await client.GetAsync("/swagger/index.html", Ct);
+        Assert.Equal(HttpStatusCode.OK, ui.StatusCode);
+        Assert.Equal("text/html", ui.Content.Headers.ContentType?.MediaType);
+        var uiConfig = await client.GetStringAsync("/swagger/index.js", Ct) + await ui.Content.ReadAsStringAsync(Ct);
+        Assert.Contains("/openapi/v1.json", uiConfig, StringComparison.Ordinal);
+
+        using var response = await client.GetAsync("/openapi/v1.json", Ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
@@ -293,13 +300,16 @@ public sealed class CategoryReportEndpointTests
         Assert.Equal(["200", "500", "502", "503", "504"], responses.EnumerateObject().Select(p => p.Name).Order());
     }
 
-    [Fact]
+    [Theory]
     [Trait("Scenario", "category-report-endpoint/Production")]
-    public async Task The_openapi_document_is_not_served_in_production()
+    [InlineData("/openapi/v1.json")]
+    [InlineData("/swagger/index.html")]
+    [InlineData("/swagger")]
+    public async Task Neither_the_document_nor_swagger_ui_is_served_in_production(string path)
     {
         await using var api = new TestApi { PageSource = new FakePageSource(page => FakePageSource.Healthy(page)) };
 
-        using var response = await api.CreateClient().GetAsync("/openapi/v1.json", Ct);
+        using var response = await api.CreateClient().GetAsync(path, Ct);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }

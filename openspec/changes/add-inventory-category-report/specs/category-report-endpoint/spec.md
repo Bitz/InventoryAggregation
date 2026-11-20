@@ -105,15 +105,16 @@ place.
 ### Requirement: The endpoint is described by an OpenAPI document in Development
 In the `Development` environment the service SHALL serve the built-in ASP.NET Core OpenAPI document at
 `/openapi/v1.json`, describing `GET /api/inventory/categories` with its `200` response and its Problem
-Details responses (`500`, `502`, `503`, `504`). Outside `Development` the document SHALL NOT be served
-(`design.md` D19).
+Details responses (`500`, `502`, `503`, `504`), and Swagger UI at `/swagger` rendering that document.
+Outside `Development` neither SHALL be served (`design.md` D19).
 
 #### Scenario: Development
-- **WHEN** the service runs in `Development` and `/openapi/v1.json` is requested
-- **THEN** the response is `200` with a document that lists the report route and its response statuses
+- **WHEN** the service runs in `Development` and `/openapi/v1.json` and `/swagger/index.html` are requested
+- **THEN** the document is `200` and lists the report route and its response statuses
+- **AND** the Swagger UI page is `200` and points at `/openapi/v1.json`
 
 #### Scenario: Production
-- **WHEN** the service runs in `Production` and `/openapi/v1.json` is requested
+- **WHEN** the service runs in `Production` and `/openapi/v1.json` or `/swagger/index.html` is requested
 - **THEN** the response is `404`
 
 ### Requirement: Concurrent requests share one collection

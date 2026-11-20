@@ -65,6 +65,7 @@ was left and how it would be done into the README's limitations section instead 
 - [x] Global exception handler; no stack traces outside Development.
 - [x] `RequestAborted` passed through; cancellation not logged as an error.
 - [x] OpenAPI document at `/openapi/v1.json` in Development only (D19), describing the success and Problem Details responses.
+- [x] Swagger UI at `/swagger` in Development only, rendering `/openapi/v1.json` (D19, changed 2026-11-20).
 
 ## 7. Tests
 - [x] Core: validator rules and normalization; aggregator figures, rounding, ties, ordering, spelling

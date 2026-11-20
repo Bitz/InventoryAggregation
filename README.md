@@ -56,8 +56,9 @@ InventoryApi:PageSize is 50; it must be from 1 to 25.
 dotnet run --project src/InventoryAggregation.Api
 ```
 
-The service listens on `http://localhost:5080`. In `Development` the OpenAPI document is at
-`http://localhost:5080/openapi/v1.json`.
+The service listens on `http://localhost:5080`. In `Development`, Swagger UI is at
+`http://localhost:5080/swagger` and the OpenAPI document it renders is at `http://localhost:5080/openapi/v1.json`.
+Neither is served in other environments.
 
 ## Call the endpoint
 
@@ -141,7 +142,7 @@ Bodies never contain the key, the upstream address or a stack trace (stack trace
 dotnet test
 ```
 
-119 tests, about 10 seconds. No test calls the real upstream. Retries, backoff, timeouts and the rate
+121 tests, about 10 seconds. No test calls the real upstream. Retries, backoff, timeouts and the rate
 limiter run on `FakeTimeProvider`, so a 30-second page timeout takes a fraction of a second. Tests that
 cover a spec scenario carry `[Trait("Scenario", "<capability>/<scenario title>")]`; every scenario in the
 six specs has at least one.
@@ -277,7 +278,8 @@ decision table in `design.md` §4.
 - **No caching** (D17) and **no database** (D23). Every report reads the upstream fresh.
 - **Response shape** (D18): the expected shape plus `summary`. Item prices are echoed as the upstream
   sent them; only computed money is rounded.
-- **OpenAPI** (D19) at `/openapi/v1.json` in `Development` only.
+- **OpenAPI and Swagger UI** (D19): the built-in document at `/openapi/v1.json` and Swagger UI at `/swagger`
+  reading it, both in `Development` only.
 - **One re-collection** (D20) before an integrity failure is reported.
 - **Overlapping pages** (D21). A page may hold more records than the page size; only fewer is a fault.
 - **Pacing** (D22). One rate limiter for the whole app allows 5 requests per 10 s, retries included.
