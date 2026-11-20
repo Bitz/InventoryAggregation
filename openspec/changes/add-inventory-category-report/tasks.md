@@ -25,7 +25,7 @@ was left and how it would be done into the README's limitations section instead 
 - [x] Solution with `src/InventoryAggregation.Core`, `src/InventoryAggregation.Api`,
       `tests/InventoryAggregation.Core.Tests`, `tests/InventoryAggregation.Api.Tests`.
 - [x] `Directory.Build.props`: nullable on, warnings as errors, implicit usings.
-- [ ] Confirm Core has no reference to ASP.NET Core or `System.Net.Http` types in its API.
+- [x] Confirm Core has no reference to ASP.NET Core or `System.Net.Http` types in its API.
 
 ## 2. Configuration (`service-configuration`)
 - [ ] `InventoryApiOptions` with validation and `ValidateOnStart`; startup failure names the setting.
@@ -44,17 +44,17 @@ was left and how it would be done into the README's limitations section instead 
 - [ ] Retry log entries.
 
 ## 4. Collection (`inventory-collection`)
-- [ ] Page 1 reference, bounded-concurrency fetch of the rest.
-- [ ] Per-page checks and refetch.
-- [ ] End-of-data check.
-- [ ] Reconciliation, one re-collection, failure details.
-- [ ] `MaxPages`, `CollectionTimeout`, caller cancellation.
-- [ ] Outcome counters.
+- [x] Page 1 reference, bounded-concurrency fetch of the rest.
+- [x] Per-page checks and refetch.
+- [x] End-of-data check.
+- [x] Reconciliation, one re-collection, failure details.
+- [x] `MaxPages`, `CollectionTimeout`, caller cancellation.
+- [x] Outcome counters.
 
 ## 5. Records and aggregation (`inventory-records`, `category-aggregation`)
-- [ ] `RecordValidator`: all reasons per record, normalization, policy.
-- [ ] `CategoryAggregator`: zero-quantity drop, grouping and display name, figures, order.
-- [ ] `InventoryReportService`: collect ▸ validate ▸ aggregate, returns report or failure.
+- [x] `RecordValidator`: all reasons per record, normalization, policy.
+- [x] `CategoryAggregator`: zero-quantity drop, grouping and display name, figures, order.
+- [x] `InventoryReportService`: collect ▸ validate ▸ aggregate, returns report or failure.
 - [ ] Concurrent callers share the collection in flight (D24); the shared run stops only when every waiting caller has gone.
 
 ## 6. Endpoint (`category-report-endpoint`)
@@ -65,7 +65,7 @@ was left and how it would be done into the README's limitations section instead 
 - [ ] OpenAPI document at `/openapi/v1.json` in Development only (D19), describing the success and Problem Details responses.
 
 ## 7. Tests
-- [ ] Core: validator rules and normalization; aggregator figures, rounding, ties, ordering, spelling
+- [x] Core: validator rules and normalization; aggregator figures, rounding, ties, ordering, spelling
       variants, all-zero category; collector against a scripted page source covering every scenario in
       `inventory-collection` (wrong page, drift, short page, overlapping page, overlap with omission,
       conflicts, past-the-end records,
