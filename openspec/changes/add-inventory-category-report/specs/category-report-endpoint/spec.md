@@ -32,12 +32,21 @@ The service SHALL expose `GET /api/inventory/categories`. On success it SHALL re
 
 `summary` is an addition to the expected shape (`design.md` D18). Each entry in `rejectedRecords` has the
 record's `id` (when present) and its `reasons`, for example `{ "id": 1099, "reasons": ["price is negative"] }`. Timestamps SHALL be ISO 8601 UTC with
-`Z`. Money SHALL be a JSON number with at most 2 decimal places.
+`Z`.
 
 #### Scenario: Healthy upstream
 - **WHEN** a caller requests the report and collection succeeds
 - **THEN** the response is `200` with one entry per category and a summary whose counts add up:
   `availableRecords + zeroQuantityExcluded + rejectedRecords.length = totalRecords`
+
+### Requirement: Money in the response is exact
+Computed money (`totalInventoryValue`) SHALL be a JSON number with at most 2 decimal places. An item's
+`price` SHALL be echoed exactly as the upstream sent it, so that the items still add up to the figure
+(`design.md` D13).
+
+#### Scenario: Price with more than 2 places
+- **WHEN** one record has `price: 0.005` and `quantity: 1`, and another `price: 149.99` and `quantity: 12`
+- **THEN** the item prices are `0.005` and `149.99` and `totalInventoryValue` is `1799.89`
 
 ### Requirement: Failures are answered with Problem Details, never with partial figures
 When the report cannot be produced the endpoint SHALL return an RFC 9457 Problem Details body

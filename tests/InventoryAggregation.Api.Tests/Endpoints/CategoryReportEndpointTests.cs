@@ -56,6 +56,30 @@ public sealed class CategoryReportEndpointTests
     }
 
     [Fact]
+    [Trait("Scenario", "category-report-endpoint/Price with more than 2 places")]
+    public async Task Item_prices_are_echoed_and_the_value_rounded_once()
+    {
+        const string body = """
+            {"records":[
+              {"id":1,"name":"Fine","category":"Parts","price":0.005,"quantity":1,"lastUpdated":"2026-10-15T12:30:00Z"},
+              {"id":2,"name":"Printer","category":"Parts","price":149.99,"quantity":12,"lastUpdated":"2026-10-15T12:31:00Z"}],
+             "page":1,"pageSize":25,"totalPages":1,"totalRecords":2}
+            """;
+        await using var api = new TestApi
+        {
+            Upstream = (request, _, _) => Task.FromResult(ScriptedHttpHandler.Json(request.RequestUri!.Query.Contains("page=1&", StringComparison.Ordinal)
+                ? body
+                : """{"records":[],"page":2,"pageSize":25,"totalPages":1,"totalRecords":2}""")),
+        };
+
+        var text = await api.CreateClient().GetStringAsync(Route, Ct);
+
+        Assert.Contains("\"price\":0.005", text, StringComparison.Ordinal);
+        Assert.Contains("\"price\":149.99", text, StringComparison.Ordinal);
+        Assert.Contains("\"totalInventoryValue\":1799.89,", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     [Trait("Scenario", "category-report-endpoint/Upstream down")]
     public async Task An_unreachable_upstream_gives_502_upstream_unavailable()
     {

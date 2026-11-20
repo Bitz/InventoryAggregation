@@ -115,7 +115,8 @@ app.MapGet("/api/records", async (HttpContext context) =>
             envelope["totalRecords"] = 160;
             break;
         case "overlap" when page == 3:
-            pageRecords = [records[(2 * size) - 1], .. pageRecords.Take(pageRecords.Count - 1)];
+            // Repeat page 2's last record in place of one from the middle; page 4's own overlap cannot hide the gap.
+            pageRecords[10] = records[(2 * size) - 1];
             break;
         case "short-page" when page == 3:
             pageRecords.RemoveAt(pageRecords.Count - 1);

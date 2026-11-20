@@ -88,15 +88,15 @@ was left and how it would be done into the README's limitations section instead 
       `drift-totals`, `overlap`, `short-page`, `wrong-page`, `conflict`, `bad-record`, `truncated`,
       `extra-page`, `unknown-status`). Lets anyone reproduce a reported upstream behaviour in minutes
       and see which failure kind the service names.
-- [ ] README section on running the service against the stub.
+- [x] README section on running the service against the stub.
 
 ## 9. Documentation
-- [ ] README: prerequisites, configuring the key (user secrets and environment variable), running the
+- [x] README: prerequisites, configuring the key (user secrets and environment variable), running the
       app, running the tests, the endpoint with a sample `curl` and sample responses (success and one
       failure).
-- [ ] Architecture note, half a page: the pieces in `design.md` §1 and why the splits are where they are.
-- [ ] Assumptions and decisions: D1–D24 in plain words, and every response-shape deviation.
-- [ ] Known limitations and next steps: no caching (D17); coalescing (D24) works within one instance
+- [x] Architecture note, half a page: the pieces in `design.md` §1 and why the splits are where they are.
+- [x] Assumptions and decisions: D1–D24 in plain words, and every response-shape deviation.
+- [x] Known limitations and next steps: no caching (D17); coalescing (D24) works within one instance
       only, so several instances would each collect and share the upstream's rate limit; no persistence
       (D23); no metrics export, anything from §0–§8 left undone, and what would change with more time.
 
@@ -104,6 +104,6 @@ was left and how it would be done into the README's limitations section instead 
 - [ ] Fresh clone into an empty folder, follow the README word for word, on a machine state with only
       the .NET 10 SDK: build, test, run, call the endpoint.
 - [ ] Search the full history for the key value.
-- [ ] Every scenario in the six specs maps to a test or to a stated limitation.
+- [x] Every scenario in the six specs maps to a test or to a stated limitation.
 - [ ] Rehearse a change: add one more per-category figure end to end and note which files it touched.
       If more than the aggregator, its result type, the response mapping and tests changed, simplify.
