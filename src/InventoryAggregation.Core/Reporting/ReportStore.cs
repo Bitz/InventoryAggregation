@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace InventoryAggregation.Core.Reporting;
 
 /// <summary>What started a refresh. Part of the response contract as <c>freshness.trigger</c>.</summary>
@@ -26,7 +28,10 @@ public static class RefreshTriggerNames
 }
 
 /// <summary>The latest good report and the refresh that produced it.</summary>
-public sealed record StoredReport(CategoryReport Report, RefreshTrigger Trigger)
+/// <param name="Report">The figures.</param>
+/// <param name="Trigger">What started the refresh that made them.</param>
+/// <param name="Refresh">That refresh's <c>refresh inventory report</c> span, or default when nothing was tracing (design.md D38).</param>
+public sealed record StoredReport(CategoryReport Report, RefreshTrigger Trigger, ActivityContext Refresh = default)
 {
     /// <summary>When the figures were made: the report's <c>generatedAt</c>.</summary>
     public DateTimeOffset AsOf => Report.Summary.GeneratedAt;
@@ -62,11 +67,11 @@ public sealed class ReportStore
 
     public ReportSnapshot Snapshot => Volatile.Read(ref _snapshot);
 
-    public void RecordSuccess(CategoryReport report, RefreshTrigger trigger, DateTimeOffset startedAt)
+    public void RecordSuccess(CategoryReport report, RefreshTrigger trigger, DateTimeOffset startedAt, ActivityContext refresh = default)
     {
         ArgumentNullException.ThrowIfNull(report);
         Volatile.Write(ref _snapshot, new ReportSnapshot(
-            new StoredReport(report, trigger),
+            new StoredReport(report, trigger, refresh),
             new RefreshAttempt(startedAt, trigger, RefreshAttempt.Success, null)));
     }
 

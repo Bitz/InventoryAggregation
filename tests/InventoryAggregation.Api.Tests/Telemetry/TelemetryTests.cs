@@ -100,6 +100,7 @@ public sealed class TelemetryTests
 
     [Fact]
     [Trait("Scenario", "service-telemetry/Forced request")]
+    [Trait("Scenario", "service-telemetry/Forced request with a new report")]
     public async Task A_forced_request_links_its_span_to_the_refresh_it_waited_for()
     {
         var activities = new List<Activity>();
@@ -122,6 +123,59 @@ public sealed class TelemetryTests
         Assert.Equal("fresh", refresh.GetTagItem("inventory.trigger"));
         Assert.NotEqual(traceId, refresh.TraceId);
         Assert.DoesNotContain(all, a => a.TraceId == traceId && a.DisplayName == "collect inventory");
+    }
+
+    [Fact]
+    [Trait("Scenario", "service-telemetry/Plain request")]
+    public async Task A_plain_request_links_to_the_refresh_that_produced_the_report()
+    {
+        var activities = new List<Activity>();
+        await using var api = new TestApi { Activities = activities, PageSource = new FakePageSource(page => FakePageSource.Healthy(page)) };
+        await api.StartedAsync();
+        var refreshTrace = ManifestTraceId(api, "RunManifest");
+
+        var server = await ServerSpanOfAsync(api, activities, Route);
+
+        var link = Assert.Single(server.Links);
+        Assert.Equal(refreshTrace, link.Context.TraceId.ToHexString());
+        var refresh = Assert.Single(Snapshot(activities), a => a.SpanId == link.Context.SpanId && a.TraceId == link.Context.TraceId);
+        Assert.Equal("refresh inventory report", refresh.DisplayName);
+        Assert.Equal("startup", refresh.GetTagItem("inventory.trigger"));
+    }
+
+    [Fact]
+    [Trait("Scenario", "service-telemetry/Stale report")]
+    public async Task A_stale_report_links_to_the_good_refresh_not_the_failed_one()
+    {
+        var activities = new List<Activity>();
+        var failing = false;
+        var source = new FakePageSource(page => Volatile.Read(ref failing)
+            ? FakePageSource.Fail(FailureKinds.UpstreamUnavailable, page)
+            : FakePageSource.Healthy(page));
+        await using var api = new TestApi { Activities = activities, PageSource = source };
+        await api.StartedAsync();
+        var goodTrace = ManifestTraceId(api, "RunManifest");
+        Volatile.Write(ref failing, true);
+        await api.NextScheduledRefreshAsync();
+        var failedTrace = ManifestTraceId(api, "RunManifestWithoutData");
+
+        var server = await ServerSpanOfAsync(api, activities, Route);
+
+        var link = Assert.Single(server.Links);
+        Assert.Equal(goodTrace, link.Context.TraceId.ToHexString());
+        Assert.NotEqual(failedTrace, goodTrace);
+    }
+
+    [Fact]
+    public async Task A_report_not_ready_response_has_no_link()
+    {
+        var activities = new List<Activity>();
+        await using var api = new TestApi { Activities = activities, PageSource = new FakePageSource(page => FakePageSource.Fail(FailureKinds.UpstreamUnavailable, page)) };
+        await api.StartedAsync();
+
+        var server = await ServerSpanOfAsync(api, activities, Route);
+
+        Assert.Empty(server.Links);
     }
 
     [Fact]
@@ -308,6 +362,18 @@ public sealed class TelemetryTests
         var record = api.Logs.GetSnapshot().Last(r => r.Id.Name == manifest);
         var traceId = record.GetStructuredStateValue("TraceId");
         return [.. Snapshot(activities).Where(a => a.TraceId.ToHexString() == traceId)];
+    }
+
+    private static string ManifestTraceId(TestApi api, string manifest) =>
+        api.Logs.GetSnapshot().Last(r => r.Id.Name == manifest).GetStructuredStateValue("TraceId")!;
+
+    /// <summary>Sends a request inside a new trace and returns its server span once it has ended.</summary>
+    private static async Task<Activity> ServerSpanOfAsync(TestApi api, List<Activity> activities, string path)
+    {
+        var traceId = ActivityTraceId.CreateRandom();
+        using var response = await SendTracedAsync(api, traceId, path);
+        await FakeClock.Until(() => Snapshot(activities).Any(a => a.TraceId == traceId && a.Kind == ActivityKind.Server), "the server span to end");
+        return Snapshot(activities).Single(a => a.TraceId == traceId && a.Kind == ActivityKind.Server);
     }
 
     /// <summary>A copy of the exported spans; other hosts' spans may be appended meanwhile.</summary>

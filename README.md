@@ -320,8 +320,9 @@ What is exported:
 - **Traces:** one per refresh: a root span `refresh inventory report` with `inventory.trigger`
   (`startup`, `scheduled` or `fresh`), a `collect inventory` span beneath it with `inventory.outcome`
   (`success` or the failure kind), `inventory.pages`, `inventory.requests` and `inventory.records`, and a
-  span per upstream request. A request with `fresh=true` that waits on a collection carries a link to
-  that refresh's span; plain requests are served from memory and have no collection beneath them.
+  span per upstream request. Every `200` links its server span to the `refresh inventory report` span of
+  the refresh that produced the served report, stale or not, so a caller's trace leads to the run behind
+  its figures. A request with `fresh=true` that waited on a collection that failed links to that one too.
 - **Metrics** on the `InventoryAggregation` meter: `inventory.collections` and
   `inventory.collection.duration` (both by `inventory.outcome` and `inventory.trigger`),
   `inventory.report.age` (seconds since the stored report was made; nothing while none is stored),
@@ -342,7 +343,7 @@ payloads.
 dotnet test
 ```
 
-185 tests, about 15 seconds. No test calls the real upstream. Retries, backoff, timeouts, the rate
+188 tests, about 15 seconds. No test calls the real upstream. Retries, backoff, timeouts, the rate
 limiter and the refresh schedule run on `FakeTimeProvider`, so a 30-second page timeout or a 5-minute
 refresh interval takes a fraction of a second. Tests that cover a spec scenario carry
 `[Trait("Scenario", "<capability>/<scenario title>")]`; every scenario in the specs has at least one.
@@ -535,7 +536,7 @@ decision tables in the two archived `design.md` files, §4.
   only stops waiting. Shutdown cancels the running collection and records no failure.
 - **`freshness` and `Age`** (D34, D37) on every `200`, so callers can tell how old the figures are without
   reading logs.
-- **A trace per refresh** (D35), with forced requests linking to the refresh they waited on.
+- **A trace per refresh** (D35), and every `200` links to the refresh that produced its report (D38).
 - **The refresh settings** (D36) sit in the `InventoryApi` section with the others.
 
 ## Upstream behaviour
@@ -601,7 +602,7 @@ tests/                             Core tests (scripted page source) and Api tes
 tools/FakeInventoryApi/            local fake upstream with fault modes
 tools/openspec/                    drift checker used by spec:check
 openspec/specs/                    the built behaviour, one spec per capability, every scenario tested
-openspec/changes/archive/          the archived changes: proposal, design (decisions D1–D26, D27–D36, D37), tasks, probe findings
+openspec/changes/archive/          the archived changes: proposal, design (decisions D1–D26, D27–D36, D37, D38), tasks, probe findings
 .github/workflows/, .githooks/     spec checks in CI and before each commit
 recordings/                        (git-ignored) raw upstream responses and the expected report
 ```

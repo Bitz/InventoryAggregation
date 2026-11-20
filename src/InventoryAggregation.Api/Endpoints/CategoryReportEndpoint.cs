@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using InventoryAggregation.Api.Configuration;
 using InventoryAggregation.Core.Reporting;
@@ -70,9 +71,32 @@ public static partial class CategoryReportEndpoint
             return FailureResponses.NotReady(status, now, settings.RateLimitWindow, context);
         }
 
+        LinkToRefresh(stored);
         var response = CategoryReportResponse.From(stored, status, now, settings.StaleAfter, IncludesAudit(include));
         context.Response.Headers.Age = response.Freshness.AgeSeconds.ToString(CultureInfo.InvariantCulture);
         return TypedResults.Ok(response);
+    }
+
+    /// <summary>
+    /// Points the request's span at the refresh that produced the served report (design.md D38), once: a
+    /// <c>fresh=true</c> request that waited on that refresh already links to it.
+    /// </summary>
+    private static void LinkToRefresh(StoredReport stored)
+    {
+        if (Activity.Current is not { } request || stored.Refresh == default)
+        {
+            return;
+        }
+
+        foreach (var link in request.Links)
+        {
+            if (link.Context == stored.Refresh)
+            {
+                return;
+            }
+        }
+
+        request.AddLink(new ActivityLink(stored.Refresh));
     }
 
     /// <summary><c>include</c> is a comma-separated list; <c>audit</c> adds the run's lineage. Other values are ignored.</summary>

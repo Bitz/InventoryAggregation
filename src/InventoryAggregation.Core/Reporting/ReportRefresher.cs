@@ -230,7 +230,7 @@ public sealed partial class ReportRefresher : IDisposable
 
             if (result.IsSuccess)
             {
-                _store.RecordSuccess(result.Report, run.Trigger, run.StartedAt);
+                _store.RecordSuccess(result.Report, run.Trigger, run.StartedAt, run.Context ?? default);
                 var summary = result.Report.Summary;
                 LogStored(run.TriggerName, summary.TotalRecords, summary.GeneratedAt);
             }
