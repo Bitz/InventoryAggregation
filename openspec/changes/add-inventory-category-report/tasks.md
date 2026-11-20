@@ -28,7 +28,7 @@ was left and how it would be done into the README's limitations section instead 
 - [x] Confirm Core has no reference to ASP.NET Core or `System.Net.Http` types in its API.
 
 ## 2. Configuration (`service-configuration`)
-- [ ] `InventoryApiOptions` with validation and `ValidateOnStart`; startup failure names the setting.
+- [x] `InventoryApiOptions` with validation and `ValidateOnStart`; startup failure names the setting.
 - [x] `appsettings.json` with defaults and no key; `UserSecretsId` on the Api project.
 - [x] `AddInventoryAggregation(IConfiguration)` registers every own component and `TimeProvider.System`.
 - [x] Header redaction for the key in `IHttpClientFactory` logging.
@@ -57,14 +57,14 @@ was left and how it would be done into the README's limitations section instead 
 - [x] `RecordValidator`: all reasons per record, normalization, policy.
 - [x] `CategoryAggregator`: zero-quantity drop, grouping and display name, figures, order.
 - [x] `InventoryReportService`: collect ▸ validate ▸ aggregate, returns report or failure.
-- [ ] Concurrent callers share the collection in flight (D24); the shared run stops only when every waiting caller has gone.
+- [x] Concurrent callers share the collection in flight (D24); the shared run stops only when every waiting caller has gone.
 
 ## 6. Endpoint (`category-report-endpoint`)
-- [ ] `GET /api/inventory/categories` and response contract.
-- [ ] One failure-kind ▸ status map; Problem Details with `kind` and `traceId`; `Retry-After` on `503`.
-- [ ] Global exception handler; no stack traces outside Development.
-- [ ] `RequestAborted` passed through; cancellation not logged as an error.
-- [ ] OpenAPI document at `/openapi/v1.json` in Development only (D19), describing the success and Problem Details responses.
+- [x] `GET /api/inventory/categories` and response contract.
+- [x] One failure-kind ▸ status map; Problem Details with `kind` and `traceId`; `Retry-After` on `503`.
+- [x] Global exception handler; no stack traces outside Development.
+- [x] `RequestAborted` passed through; cancellation not logged as an error.
+- [x] OpenAPI document at `/openapi/v1.json` in Development only (D19), describing the success and Problem Details responses.
 
 ## 7. Tests
 - [x] Core: validator rules and normalization; aggregator figures, rounding, ties, ordering, spelling
@@ -76,9 +76,10 @@ was left and how it would be done into the README's limitations section instead 
       `inventory-source` (retry then success, exhaustion, `Retry-After` honoured and too long, fail-fast
       statuses, unknown status, hang, truncated body, cancellation, key not in URL or logs, pacing at
       5 per 10 s across two concurrent collections).
-- [ ] Api: endpoint tests with `WebApplicationFactory` and a fake page source, one per failure kind, plus
+- [x] Api: endpoint tests with `WebApplicationFactory` and a fake page source, one per failure kind, plus
       the healthy contract and the summary arithmetic.
-- [ ] No test sleeps on real time.
+- [x] No test sleeps on real time. Retries, backoff, timeouts and pacing run on `FakeTimeProvider`; the clock driver
+      pauses about a millisecond between fake-clock steps so thread-pool continuations run before time moves on.
 
 ## 8. Local fault stub
 - [ ] `tools/FakeInventoryApi`: a minimal app that serves a generated static dataset on
