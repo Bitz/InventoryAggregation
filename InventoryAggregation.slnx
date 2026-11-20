@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/InventoryAggregation.Api/InventoryAggregation.Api.csproj" />
+    <Project Path="src/InventoryAggregation.Core/InventoryAggregation.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/InventoryAggregation.Api.Tests/InventoryAggregation.Api.Tests.csproj" />
+    <Project Path="tests/InventoryAggregation.Core.Tests/InventoryAggregation.Core.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/FakeInventoryApi/FakeInventoryApi.csproj" />
+  </Folder>
+</Solution>

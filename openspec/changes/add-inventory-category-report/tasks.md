@@ -21,10 +21,10 @@ was left and how it would be done into the README's limitations section instead 
       `RateLimitWindow` added; `MaxRetryAfter` 10 s covers the 6 s maximum seen; the rest unchanged.
 
 ## 1. Scaffold
-- [ ] `global.json` pinned to the .NET 10 SDK band, `rollForward: latestFeature`.
-- [ ] Solution with `src/InventoryAggregation.Core`, `src/InventoryAggregation.Api`,
+- [x] `global.json` pinned to the .NET 10 SDK band, `rollForward: latestFeature`.
+- [x] Solution with `src/InventoryAggregation.Core`, `src/InventoryAggregation.Api`,
       `tests/InventoryAggregation.Core.Tests`, `tests/InventoryAggregation.Api.Tests`.
-- [ ] `Directory.Build.props`: nullable on, warnings as errors, implicit usings.
+- [x] `Directory.Build.props`: nullable on, warnings as errors, implicit usings.
 - [ ] Confirm Core has no reference to ASP.NET Core or `System.Net.Http` types in its API.
 
 ## 2. Configuration (`service-configuration`)

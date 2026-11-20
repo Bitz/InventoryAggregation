@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>InventoryAggregation.Core</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Core decides what the numbers are. It must not reference HTTP, ASP.NET Core or a JSON serializer. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="InventoryAggregation.Core.Tests" />
+  </ItemGroup>
+
+</Project>
