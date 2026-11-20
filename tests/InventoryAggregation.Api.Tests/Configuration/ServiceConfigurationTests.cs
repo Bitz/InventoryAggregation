@@ -37,8 +37,28 @@ public sealed class ServiceConfigurationTests
         Assert.Contains("InventoryApi:PageSize is 50; it must be from 1 to 25.", error.Failures);
     }
 
+    [Fact]
+    [Trait("Scenario", "service-configuration/Refresh settings out of order")]
+    public async Task Startup_fails_naming_both_refresh_settings_when_they_are_out_of_order()
+    {
+        var error = await StartupFailureAsync(new()
+        {
+            ["InventoryApi:RefreshInterval"] = "00:10:00",
+            ["InventoryApi:StaleAfter"] = "00:05:00",
+        });
+
+        var message = Assert.Single(error.Failures);
+        Assert.Contains("InventoryApi:StaleAfter", message, StringComparison.Ordinal);
+        Assert.Contains("InventoryApi:RefreshInterval", message, StringComparison.Ordinal);
+    }
+
     [Theory]
-    [InlineData("InventoryApi:BaseUrl", "ftp://inventory.test/", "InventoryApi:BaseUrl must be an absolute http or https URI.")]
+    [InlineData("InventoryApi:RefreshInterval", "00:00:30", "InventoryApi:RefreshInterval is 00:00:30; it must be at least InventoryApi:CollectionTimeout (00:01:00).")]
+    [InlineData("InventoryApi:RefreshRetryDelay", "00:00:00", "InventoryApi:RefreshRetryDelay is 00:00:00; it must be greater than zero and at most InventoryApi:RefreshInterval (00:05:00).")]
+    [InlineData("InventoryApi:RefreshRetryDelay", "00:06:00", "InventoryApi:RefreshRetryDelay is 00:06:00; it must be greater than zero and at most InventoryApi:RefreshInterval (00:05:00).")]
+    [InlineData("InventoryApi:FreshMaxAge", "-00:00:01", "InventoryApi:FreshMaxAge is -00:00:01; it must be zero or more and less than InventoryApi:RefreshInterval (00:05:00).")]
+    [InlineData("InventoryApi:FreshMaxAge", "00:05:00", "InventoryApi:FreshMaxAge is 00:05:00; it must be zero or more and less than InventoryApi:RefreshInterval (00:05:00).")]
+    [InlineData("InventoryApi:BaseUrl", "ftp://inventory.test/","InventoryApi:BaseUrl must be an absolute http or https URI.")]
     [InlineData("InventoryApi:BaseUrl", "/relative", "InventoryApi:BaseUrl must be an absolute http or https URI.")]
     [InlineData("InventoryApi:ApiKeyHeader", "X Api Key", "InventoryApi:ApiKeyHeader must be a valid HTTP header name.")]
     [InlineData("InventoryApi:PageTimeout", "00:00:05", "InventoryApi:PageTimeout is 00:00:05; it must be at least InventoryApi:AttemptTimeout (00:00:10).")]

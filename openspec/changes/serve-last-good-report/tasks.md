@@ -4,9 +4,9 @@ Read `proposal.md` and `design.md` first. Nothing under `InventoryReportService`
 aggregator, upstream client, rate limiter) should change; if it has to, stop and say why.
 
 ## 1. Settings (`service-configuration`)
-- [ ] `RefreshInterval`, `RefreshRetryDelay`, `StaleAfter`, `FreshMaxAge` on `InventoryApiOptions`, with the
+- [x] `RefreshInterval`, `RefreshRetryDelay`, `StaleAfter`, `FreshMaxAge` on `InventoryApiOptions`, with the
       rules in `design.md` §8 in `InventoryApiOptionsValidator`; defaults in `appsettings.json`.
-- [ ] Startup failure for out-of-order refresh settings names both settings.
+- [x] Startup failure for out-of-order refresh settings names both settings.
 
 ## 2. Store and refresher (`report-refresh`)
 - [ ] `ReportStore` in Core: the latest good `CategoryReport` with its trigger, plus the last attempt's time,

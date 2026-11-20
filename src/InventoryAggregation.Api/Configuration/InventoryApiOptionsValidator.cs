@@ -77,6 +77,26 @@ internal sealed partial class InventoryApiOptionsValidator : IValidateOptions<In
         Range(failures, nameof(options.RateLimitPermits), options.RateLimitPermits, 1, 100);
         Positive(failures, nameof(options.RateLimitWindow), options.RateLimitWindow);
 
+        if (options.RefreshInterval < options.CollectionTimeout)
+        {
+            failures.Add($"{Section}:RefreshInterval is {options.RefreshInterval}; it must be at least {Section}:CollectionTimeout ({options.CollectionTimeout}).");
+        }
+
+        if (options.RefreshRetryDelay <= TimeSpan.Zero || options.RefreshRetryDelay > options.RefreshInterval)
+        {
+            failures.Add($"{Section}:RefreshRetryDelay is {options.RefreshRetryDelay}; it must be greater than zero and at most {Section}:RefreshInterval ({options.RefreshInterval}).");
+        }
+
+        if (options.StaleAfter < options.RefreshInterval)
+        {
+            failures.Add($"{Section}:StaleAfter is {options.StaleAfter}; it must be at least {Section}:RefreshInterval ({options.RefreshInterval}).");
+        }
+
+        if (options.FreshMaxAge < TimeSpan.Zero || options.FreshMaxAge >= options.RefreshInterval)
+        {
+            failures.Add($"{Section}:FreshMaxAge is {options.FreshMaxAge}; it must be zero or more and less than {Section}:RefreshInterval ({options.RefreshInterval}).");
+        }
+
         return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
     }
 

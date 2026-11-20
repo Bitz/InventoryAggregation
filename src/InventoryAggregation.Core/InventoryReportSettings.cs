@@ -11,7 +11,7 @@ public enum InvalidRecordPolicy
 }
 
 /// <summary>
-/// The tuning the collection and the report need, copied from the validated configuration by the host.
+/// The tuning the collection, the report and its refresh need, copied from the validated configuration by the host.
 /// Defaults match design.md §8.
 /// </summary>
 public sealed record InventoryReportSettings
@@ -29,4 +29,12 @@ public sealed record InventoryReportSettings
     public TimeSpan CollectionTimeout { get; init; } = TimeSpan.FromMinutes(1);
 
     public InvalidRecordPolicy InvalidRecordPolicy { get; init; } = InvalidRecordPolicy.Report;
+
+    public TimeSpan RefreshInterval { get; init; } = TimeSpan.FromMinutes(5);
+
+    public TimeSpan RefreshRetryDelay { get; init; } = TimeSpan.FromSeconds(30);
+
+    public TimeSpan StaleAfter { get; init; } = TimeSpan.FromHours(1);
+
+    public TimeSpan FreshMaxAge { get; init; } = TimeSpan.FromSeconds(30);
 }
