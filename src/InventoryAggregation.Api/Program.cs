@@ -1,10 +1,12 @@
 using InventoryAggregation.Api;
 using InventoryAggregation.Api.Endpoints;
+using InventoryAggregation.Api.Telemetry;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddInventoryAggregation(builder.Configuration);
+builder.Services.AddInventoryTelemetry(builder.Configuration);
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<InternalErrorHandler>();
 builder.Services.AddOpenApi();

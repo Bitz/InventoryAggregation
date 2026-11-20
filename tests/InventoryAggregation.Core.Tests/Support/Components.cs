@@ -2,6 +2,8 @@ using InventoryAggregation.Core.Aggregation;
 using InventoryAggregation.Core.Collection;
 using InventoryAggregation.Core.Records;
 using InventoryAggregation.Core.Reporting;
+using InventoryAggregation.Core.Telemetry;
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -16,7 +18,10 @@ internal static class Components
         IInventoryPageSource source,
         InventoryReportSettings? settings = null,
         TimeProvider? time = null) =>
-        new(source, settings ?? new InventoryReportSettings(), time ?? new FakeTimeProvider(), NullLogger<InventoryCollector>.Instance);
+        new(source, settings ?? new InventoryReportSettings(), time ?? new FakeTimeProvider(), Metrics(), NullLogger<InventoryCollector>.Instance);
+
+    public static InventoryMetrics Metrics() =>
+        new(new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
 
     public static ServiceProvider ReportServices(
         IInventoryPageSource source,
@@ -29,6 +34,8 @@ internal static class Components
         services.AddSingleton(settings ?? new InventoryReportSettings());
         services.AddSingleton(time ?? new FakeTimeProvider(new DateTimeOffset(2026, 11, 20, 15, 4, 5, TimeSpan.Zero)));
         services.AddSingleton(source);
+        services.AddMetrics();
+        services.AddSingleton<InventoryMetrics>();
         services.AddSingleton<RecordValidator>();
         services.AddSingleton<CategoryAggregator>();
         services.AddTransient<InventoryCollector>();

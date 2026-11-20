@@ -96,7 +96,7 @@ was left and how it would be done into the README's limitations section instead 
       app, running the tests, the endpoint with a sample `curl` and sample responses (success and one
       failure).
 - [x] Architecture note, half a page: the pieces in `design.md` §1 and why the splits are where they are.
-- [x] Assumptions and decisions: D1–D24 in plain words, and every response-shape deviation.
+- [x] Assumptions and decisions: D1–D25 in plain words, and every response-shape deviation.
 - [x] Known limitations and next steps: no caching (D17); coalescing (D24) works within one instance
       only, so several instances would each collect and share the upstream's rate limit; no persistence
       (D23); no metrics export, anything from §0–§8 left undone, and what would change with more time.
@@ -111,3 +111,12 @@ was left and how it would be done into the README's limitations section instead 
       If more than the aggregator, its result type, the response mapping and tests changed, simplify.
       (2026-11-20: total units per category touched `CategoryAggregator.cs` (aggregator and `CategorySummary`),
       `CategoryReportResponse.cs` and `CategoryAggregatorTests.cs`; nothing else.)
+
+## 11. Telemetry (`service-telemetry`, D25)
+- [x] OpenTelemetry for logs, traces and metrics; OTLP export only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set;
+      the startup log says which, without headers.
+- [x] `collect inventory` span with outcome, pages and requests; meter `InventoryAggregation` with collections,
+      duration, retries, refetches and re-collections.
+- [x] Upstream span redaction (no host, port or full URL); HTTP client metrics not collected.
+- [x] Tests for every `service-telemetry` scenario; one manual export to a local OTLP listener, with the payload
+      searched for the key and the upstream address.

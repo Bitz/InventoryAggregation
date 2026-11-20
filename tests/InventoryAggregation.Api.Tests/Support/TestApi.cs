@@ -12,6 +12,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Time.Testing;
+using OpenTelemetry.Trace;
 
 namespace InventoryAggregation.Api.Tests.Support;
 
@@ -39,6 +40,9 @@ internal sealed class TestApi : WebApplicationFactory<Program>
 
     public FakeTimeProvider Time { get; } = new(new DateTimeOffset(2026, 11, 20, 15, 4, 5, TimeSpan.Zero));
 
+    /// <summary>When set, finished spans are collected here as well as wherever else they go.</summary>
+    public List<System.Diagnostics.Activity>? Activities { get; init; }
+
     public ScriptedHttpHandler? UpstreamHandler { get; private set; }
 
     public FakeLogCollector Logs => Services.GetFakeLogCollector();
@@ -51,6 +55,11 @@ internal sealed class TestApi : WebApplicationFactory<Program>
         builder.ConfigureTestServices(services =>
         {
             services.AddSingleton<TimeProvider>(Time);
+            if (Activities is not null)
+            {
+                services.ConfigureOpenTelemetryTracerProvider(tracing => tracing.AddInMemoryExporter(Activities));
+            }
+
             if (PageSource is not null)
             {
                 services.RemoveAll<IInventoryPageSource>();

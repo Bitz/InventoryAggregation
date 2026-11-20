@@ -1,7 +1,9 @@
 using System.Diagnostics.CodeAnalysis;
 using InventoryAggregation.Core.Aggregation;
 using InventoryAggregation.Core.Collection;
+using System.Diagnostics;
 using InventoryAggregation.Core.Records;
+using InventoryAggregation.Core.Telemetry;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -55,6 +57,7 @@ public sealed partial class InventoryReportService(
     CategoryAggregator aggregator,
     InventoryReportSettings settings,
     TimeProvider timeProvider,
+    InventoryMetrics metrics,
     ILogger<InventoryReportService> logger)
 {
     private readonly Lock _gate = new();
@@ -115,12 +118,41 @@ public sealed partial class InventoryReportService(
 
     private async Task<ReportResult> RunAsync(SharedRun run)
     {
+        // One span per shared collection, a child of the request that started it (design.md D25).
+        using var activity = InventoryTelemetry.ActivitySource.StartActivity("collect inventory");
+        var started = timeProvider.GetTimestamp();
+        var outcome = "internal-error";
         try
         {
-            return await BuildReportAsync(run.Cancellation.Token).ConfigureAwait(false);
+            var result = await BuildReportAsync(run.Cancellation.Token).ConfigureAwait(false);
+            outcome = result.IsSuccess ? "success" : result.Failure.Kind;
+            if (result.IsSuccess)
+            {
+                activity?.SetTag("inventory.pages", result.Report.Summary.PagesFetched);
+                activity?.SetTag("inventory.requests", result.Report.Summary.Requests);
+                activity?.SetTag("inventory.records", result.Report.Summary.TotalRecords);
+            }
+            else
+            {
+                activity?.SetStatus(ActivityStatusCode.Error, result.Failure.Detail);
+            }
+
+            return result;
+        }
+        catch (OperationCanceledException) when (run.Cancellation.IsCancellationRequested)
+        {
+            outcome = "cancelled";
+            throw;
+        }
+        catch (Exception exception)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, exception.GetType().Name);
+            throw;
         }
         finally
         {
+            activity?.SetTag("inventory.outcome", outcome);
+            metrics.CollectionFinished(outcome, timeProvider.GetElapsedTime(started));
             lock (_gate)
             {
                 if (ReferenceEquals(_current, run))

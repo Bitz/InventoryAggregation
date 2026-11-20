@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using InventoryAggregation.Api.Configuration;
+using InventoryAggregation.Core.Telemetry;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
 using Polly;
@@ -28,6 +29,7 @@ internal static partial class UpstreamResilience
         var time = services.GetRequiredService<TimeProvider>();
         var limiter = services.GetRequiredService<UpstreamRateLimiter>();
         var logger = services.GetRequiredService<ILogger<InventoryApiClient>>();
+        var metrics = services.GetRequiredService<InventoryMetrics>();
 
         builder.TimeProvider = time;
 
@@ -47,7 +49,9 @@ internal static partial class UpstreamResilience
                 DelayGenerator = args => ValueTask.FromResult(RetryAfter(args.Outcome.Result, time)),
                 OnRetry = args =>
                 {
-                    LogRetry(logger, PageOf(args.Context), args.AttemptNumber + 1, Describe(args.Outcome), args.RetryDelay);
+                    var reason = Describe(args.Outcome);
+                    LogRetry(logger, PageOf(args.Context), args.AttemptNumber + 1, reason, args.RetryDelay);
+                    metrics.Retried(reason);
                     return default;
                 },
             });

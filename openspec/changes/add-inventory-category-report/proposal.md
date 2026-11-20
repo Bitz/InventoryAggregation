@@ -27,6 +27,8 @@ computes anything.
   Details response that says which upstream failure stopped it. No unhandled exception reaches a caller.
 - **service-configuration**: base URL, API key and tuning knobs bound from configuration, validated at
   startup; the key is kept out of source control and logs.
+- **service-telemetry**: logs, traces and metrics through OpenTelemetry, exported over OTLP when an endpoint
+  is configured, with the upstream address and the key kept out of them.
 
 ## Impact
 
@@ -40,4 +42,4 @@ computes anything.
 ## Decisions
 
 The judgement calls (zero-quantity categories, ties, rounding, category spelling, invalid records,
-partial results, status codes) are D1–D24 in `design.md` §4.
+partial results, status codes) are D1–D25 in `design.md` §4.

@@ -136,13 +136,44 @@ evidence (`page`, `expectedCount`, `collectedCount`, `duplicateIds`, `conflictin
 Bodies never contain the key, the upstream address or a stack trace (stack traces appear in
 `Development` only).
 
+## Telemetry
+
+Logs, traces and metrics go through OpenTelemetry. Nothing leaves the process unless an OTLP endpoint is
+set; the startup log says which (`Telemetry export is on: OTLP over grpc` or `... is off`). The standard
+`OTEL_*` settings apply:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317    # a collector, or any OTLP backend
+export OTEL_EXPORTER_OTLP_PROTOCOL=grpc                     # or http/protobuf (port 4318)
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>"   # if the backend needs one
+export OTEL_SERVICE_NAME=inventory-aggregation              # the default
+```
+
+What is exported:
+
+- **Logs:** everything the service logs (retries, refetches, re-collections, failures with their kind,
+  unhandled exceptions with their stack trace), with the trace id of the request.
+- **Traces:** one per report: the incoming request, a `collect inventory` span with `inventory.outcome`
+  (`success` or the failure kind), `inventory.pages`, `inventory.requests` and `inventory.records`, and a
+  span per upstream request.
+- **Metrics** on the `InventoryAggregation` meter: `inventory.collections` and
+  `inventory.collection.duration` (both by `inventory.outcome`), `inventory.upstream.retries` (by
+  `inventory.retry.reason`), `inventory.collection.page_refetches`, `inventory.collection.recollections`;
+  plus the ASP.NET Core server metrics.
+
+The upstream address is kept out like a secret: upstream request spans keep the method, status and path
+(`/api/records?*`, with the query masked by the runtime) but lose the host, port and full URL, and the
+HTTP client's own metrics are not collected because they are tagged with the upstream host. The key is
+never in telemetry. Both were checked by exporting a real run to a local OTLP listener and searching the
+payloads.
+
 ## Run the tests
 
 ```bash
 dotnet test
 ```
 
-121 tests, about 10 seconds. No test calls the real upstream. Retries, backoff, timeouts and the rate
+129 tests, about 10 seconds. No test calls the real upstream. Retries, backoff, timeouts and the rate
 limiter run on `FakeTimeProvider`, so a 30-second page timeout takes a fraction of a second. Tests that
 cover a spec scenario carry `[Trait("Scenario", "<capability>/<scenario title>")]`; every scenario in the
 six specs has at least one.
@@ -289,6 +320,8 @@ decision table in `design.md` §4.
   is kept after it ends. The shared run stops only when every caller waiting on it has gone.
 - **Outbound requests** carry only `Host` and the key header: no User-Agent, no trace-context headers.
   Default request logging is off because it writes the upstream URL; retries are logged by page instead.
+- **Telemetry** (D25) goes through OpenTelemetry, exported over OTLP only when an endpoint is configured,
+  without the upstream address or the key.
 
 ## Upstream behaviour
 
@@ -325,7 +358,9 @@ Recorded with `tools/probe` before any code was written. Details in
   (and validation rejects it). A repeated id-less record would therefore count twice.
 - **Startup errors** are printed cleanly, but the host also logs the validation exception with a stack
   trace first.
-- **No metrics export.** Retries, refetches, re-collections and failures are logged, not exported.
+- **Telemetry is only as good as its backend.** Export is off until `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and
+  no alerts or dashboards ship with the service. Only the caller that started a shared collection sees the
+  `collect inventory` span in its trace; callers that joined it do not.
 - **Category display name** follows the most common spelling in the data. It is deterministic, but a
   shift in the upstream's mix of spellings could change the name shown.
 - **Test clock.** Tests run timeouts, backoff and pacing on `FakeTimeProvider`; the helper that drives

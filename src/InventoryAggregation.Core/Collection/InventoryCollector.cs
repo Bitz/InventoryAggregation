@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using InventoryAggregation.Core.Records;
+using InventoryAggregation.Core.Telemetry;
 using Microsoft.Extensions.Logging;
 
 namespace InventoryAggregation.Core.Collection;
@@ -59,6 +60,7 @@ public sealed partial class InventoryCollector(
     IInventoryPageSource source,
     InventoryReportSettings settings,
     TimeProvider timeProvider,
+    InventoryMetrics metrics,
     ILogger<InventoryCollector> logger)
 {
     public async Task<CollectionResult> CollectAsync(CancellationToken cancellationToken)
@@ -94,6 +96,7 @@ public sealed partial class InventoryCollector(
                 if (attempt < settings.CollectionAttempts)
                 {
                     LogRecollecting(attempt, failure.Detail);
+                    metrics.Recollected();
                 }
             }
 
@@ -218,6 +221,7 @@ public sealed partial class InventoryCollector(
             if (fetch > 1)
             {
                 counters.AddRefetch();
+                metrics.PageRefetched();
                 LogRefetching(page, fetch - 1, lastProblem!);
             }
 
@@ -336,6 +340,7 @@ public sealed partial class InventoryCollector(
             if (fetch > 1)
             {
                 counters.AddRefetch();
+                metrics.PageRefetched();
             }
 
             var result = await source.GetPageAsync(page, settings.PageSize, cancellationToken).ConfigureAwait(false);

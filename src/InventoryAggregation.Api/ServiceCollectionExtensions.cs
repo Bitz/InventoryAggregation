@@ -6,6 +6,7 @@ using InventoryAggregation.Core.Aggregation;
 using InventoryAggregation.Core.Collection;
 using InventoryAggregation.Core.Records;
 using InventoryAggregation.Core.Reporting;
+using InventoryAggregation.Core.Telemetry;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
@@ -30,6 +31,8 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton(TimeProvider.System);
         services.AddSingleton(sp => sp.GetRequiredService<IOptions<InventoryApiOptions>>().Value.ToReportSettings());
 
+        services.AddMetrics();
+        services.AddSingleton<InventoryMetrics>();
         services.AddSingleton<RecordValidator>();
         services.AddSingleton<CategoryAggregator>();
         services.AddTransient<InventoryCollector>();
