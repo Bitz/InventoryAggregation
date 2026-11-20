@@ -52,8 +52,8 @@ public sealed class InventoryApiClientTests
             new Dictionary<string, string?> { ["InventoryApi:RateLimitPermits"] = "100" });
         var reports = harness.Services.GetRequiredService<InventoryReportService>();
 
-        var first = await reports.GetReportAsync(Ct);
-        var second = await reports.GetReportAsync(Ct);
+        var first = await reports.BuildReportAsync(RefreshTrigger.Scheduled, Ct);
+        var second = await reports.BuildReportAsync(RefreshTrigger.Scheduled, Ct);
 
         Assert.True(first.IsSuccess);
         Assert.True(second.IsSuccess);
@@ -197,7 +197,7 @@ public sealed class InventoryApiClientTests
     [Trait("Scenario", "inventory-source/Two reports at once")]
     public async Task Two_collections_share_the_permits_and_never_exceed_five_per_window()
     {
-        // Two separate collections, bypassing the report service's sharing, so that 16 requests
+        // Two separate collections, bypassing the refresher's sharing, so that 16 requests
         // compete for the permits. The last waits three windows, so the page deadline is raised.
         await using var harness = new ClientHarness(settings: new Dictionary<string, string?>
         {

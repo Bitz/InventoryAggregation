@@ -1,8 +1,16 @@
 // A local stand-in for the upstream Inventory API. It serves a generated, static dataset on
-// GET /api/records and misbehaves in one chosen way per run, so anyone can reproduce an upstream
+// GET /api/records and misbehaves in one chosen way at a time, so anyone can reproduce an upstream
 // behaviour and see which failure kind the service names.
 //
-//   dotnet run --project tools/FakeInventoryApi -- --mode <mode>
+//   dotnet run --project tools/FakeInventoryApi -- --mode <mode> [--key <expected API key>]
+//
+// The mode can be switched while it runs, to show the service keeping its last good report through
+// an upstream failure and recovering after it:
+//
+//   curl -X POST http://localhost:5199/fake/mode/throttle
+//
+// With --key, a request whose key differs is answered 401, as the upstream answers a wrong key;
+// without it any non-empty key is accepted.
 //
 // Every mode keeps the observed upstream habits: 5 requests per 10 s (fixed window, 429 with
 // Retry-After beyond it), even-numbered pages repeating the previous page's last record, and padded
@@ -14,26 +22,27 @@ using System.Text.Json;
 
 var modes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 {
-    ["healthy"] = "behaves as observed: a 200 report",
-    ["flaky-500"] = "the first request for each page answers 500, the retry succeeds: a 200 report",
-    ["throttle"] = "every request answers 429 with Retry-After: 120: 503 upstream-throttled",
-    ["hang"] = "page 2 never answers: 502 upstream-unavailable after the page timeout",
-    ["drift-totals"] = "page 5 reports totalRecords 160: 502 inconsistent-paging",
-    ["overlap"] = "page 3 repeats a record and omits one: 502 incomplete-dataset",
-    ["short-page"] = "page 3 holds 24 records: 502 inconsistent-paging",
-    ["wrong-page"] = "page 4 says it is page 3: 502 inconsistent-paging",
-    ["conflict"] = "id 1042 appears again on page 4 with another quantity: 502 conflicting-records",
-    ["bad-record"] = "id 1099 has a negative price: a 200 report listing it as rejected",
-    ["truncated"] = "page 2's body ends mid-record: 502 malformed-response",
-    ["extra-page"] = "the page after the last holds 3 records: 502 inconsistent-paging",
-    ["unknown-status"] = "every request answers 418: 502 upstream-rejected",
+    ["healthy"] = "behaves as observed: a good report",
+    ["flaky-500"] = "the first request for each page answers 500, the retry succeeds: a good report",
+    ["throttle"] = "every request answers 429 with Retry-After: 120: upstream-throttled",
+    ["hang"] = "page 2 never answers: upstream-unavailable after the page timeout",
+    ["drift-totals"] = "page 5 reports totalRecords 160: inconsistent-paging",
+    ["overlap"] = "page 3 repeats a record and omits one: incomplete-dataset",
+    ["short-page"] = "page 3 holds 24 records: inconsistent-paging",
+    ["wrong-page"] = "page 4 says it is page 3: inconsistent-paging",
+    ["conflict"] = "id 1042 appears again on page 4 with another quantity: conflicting-records",
+    ["bad-record"] = "id 1099 has a negative price: a good report listing it as rejected",
+    ["truncated"] = "page 2's body ends mid-record: malformed-response",
+    ["extra-page"] = "the page after the last holds 3 records: inconsistent-paging",
+    ["unknown-status"] = "every request answers 418: upstream-rejected",
 };
 
 var builder = WebApplication.CreateBuilder(args);
-var mode = builder.Configuration["mode"] ?? "healthy";
-if (!modes.TryGetValue(mode, out var effectOfMode))
+var startMode = builder.Configuration["mode"] ?? "healthy";
+var expectedKey = builder.Configuration["key"];
+if (!modes.TryGetValue(startMode, out var effectOfMode))
 {
-    Console.Error.WriteLine($"Unknown mode '{mode}'. Modes:");
+    Console.Error.WriteLine($"Unknown mode '{startMode}'. Modes:");
     foreach (var (name, effect) in modes)
     {
         Console.Error.WriteLine($"  {name,-15} {effect}");
@@ -50,16 +59,34 @@ var records = Dataset.Create();
 var limiter = new FixedWindow(5, TimeSpan.FromSeconds(10));
 var seen = new ConcurrentDictionary<int, int>();
 var requestNumber = 0;
+var currentMode = startMode.ToLowerInvariant();
+
+// Switches the fault mode while running. Not part of the upstream's API.
+app.MapPost("/fake/mode/{name}", (string name) =>
+{
+    if (!modes.TryGetValue(name, out var effect))
+    {
+        return Results.BadRequest($"Unknown mode '{name}'. Modes: {string.Join(", ", modes.Keys)}");
+    }
+
+    Volatile.Write(ref currentMode, name.ToLowerInvariant());
+    seen.Clear();
+    Console.WriteLine($"Mode switched to '{name}': {effect}");
+    return Results.Text($"mode {name}: {effect}{Environment.NewLine}");
+});
 
 app.MapGet("/api/records", async (HttpContext context) =>
 {
     var number = Interlocked.Increment(ref requestNumber);
     PrintRequest(number, context.Request);
 
-    if (string.IsNullOrEmpty(context.Request.Headers[KeyHeader]))
+    var key = context.Request.Headers[KeyHeader].ToString();
+    if (string.IsNullOrEmpty(key) || (expectedKey is not null && key != expectedKey))
     {
         return Results.Problem(statusCode: 401, title: "Unauthorized", detail: $"A valid API key is required in the {KeyHeader} header.");
     }
+
+    var mode = Volatile.Read(ref currentMode);
 
     if (limiter.TryTake(out var retryAfter) is false)
     {
@@ -146,7 +173,7 @@ app.MapGet("/api/records", async (HttpContext context) =>
     return Results.Text(json, "application/json");
 });
 
-Console.WriteLine($"Fake Inventory API, mode '{mode}': {effectOfMode}");
+Console.WriteLine($"Fake Inventory API, mode '{startMode}': {effectOfMode}{(expectedKey is null ? "" : "; only the given API key is accepted")}");
 await app.RunAsync();
 return 0;
 

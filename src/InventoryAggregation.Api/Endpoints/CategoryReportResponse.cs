@@ -11,15 +11,71 @@ namespace InventoryAggregation.Api.Endpoints;
 public sealed record CategoryReportResponse(
     IReadOnlyList<CategoryResponse> Categories,
     ReportSummaryResponse Summary,
+    FreshnessResponse Freshness,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] AuditResponse? Audit = null)
 {
-    public static CategoryReportResponse From(CategoryReport report, bool includeAudit = false)
+    /// <summary>The stored report with its freshness at <paramref name="now"/>; the audit is the stored run's (design.md D26).</summary>
+    public static CategoryReportResponse From(StoredReport stored, RefreshStatus status, DateTimeOffset now, TimeSpan staleAfter, bool includeAudit = false)
     {
-        ArgumentNullException.ThrowIfNull(report);
+        ArgumentNullException.ThrowIfNull(stored);
+        var report = stored.Report;
         return new(
             [.. report.Categories.Select(CategoryResponse.From)],
             ReportSummaryResponse.From(report.Summary),
+            FreshnessResponse.From(stored, status, now, staleAfter),
             includeAudit && report.Audit is { } audit ? AuditResponse.From(audit) : null);
+    }
+}
+
+/// <summary>
+/// How old the figures are and whether refreshing is failing (design.md D34). <c>asOf</c> equals
+/// <c>summary.generatedAt</c>; <c>stale</c> is true when the latest attempt, which came after the
+/// served report, failed; <c>overdue</c> is true when the report is older than <c>StaleAfter</c>.
+/// </summary>
+public sealed record FreshnessResponse(
+    DateTime AsOf,
+    long AgeSeconds,
+    string Trigger,
+    bool Stale,
+    bool Overdue,
+    LastRefreshResponse LastRefresh,
+    DateTime NextRefreshAt)
+{
+    public static FreshnessResponse From(StoredReport stored, RefreshStatus status, DateTimeOffset now, TimeSpan staleAfter)
+    {
+        ArgumentNullException.ThrowIfNull(stored);
+        ArgumentNullException.ThrowIfNull(status);
+        var age = now - stored.AsOf;
+        if (age < TimeSpan.Zero)
+        {
+            age = TimeSpan.Zero;
+        }
+
+        // A stored report always has an attempt behind it; the fallback only guards the type.
+        var attempt = status.Store.LastAttempt ?? new RefreshAttempt(stored.AsOf, stored.Trigger, RefreshAttempt.Success, null);
+        return new(
+            stored.AsOf.UtcDateTime,
+            (long)Math.Floor(age.TotalSeconds),
+            stored.Trigger.Name(),
+            !attempt.Succeeded,
+            age > staleAfter,
+            LastRefreshResponse.From(attempt),
+            status.NextRefreshAt.UtcDateTime);
+    }
+}
+
+/// <summary>The latest refresh attempt: when it started, in whole seconds, and <c>success</c> or the failure kind with its detail.</summary>
+public sealed record LastRefreshResponse(
+    DateTime StartedAt,
+    string Outcome,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Detail)
+{
+    public static LastRefreshResponse From(RefreshAttempt attempt)
+    {
+        ArgumentNullException.ThrowIfNull(attempt);
+        // Whole seconds, truncated (design.md D39); the store keeps the full value.
+        var startedAt = attempt.StartedAt.UtcDateTime;
+        return new(startedAt.AddTicks(-(startedAt.Ticks % TimeSpan.TicksPerSecond)), attempt.Outcome, attempt.Succeeded ? null : attempt.Detail);
     }
 }
 

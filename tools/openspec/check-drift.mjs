@@ -14,7 +14,8 @@
 //                exists) its properties match §8 exactly
 //   scenarios    every [Trait("Scenario", "<capability>/<title>")] in tests names a real scenario;
 //                every scenario in openspec/specs (built behaviour) has at least one such test;
-//                scenarios in open changes are counted as pending
+//                scenarios in open changes are counted as pending, and built scenarios an open
+//                change removes need no test until it is archived
 
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
@@ -114,21 +115,62 @@ for (const change of changeDirs) {
   }
 }
 
-// ------------------------------------------------------------------ code
-const sourceFiles = walk(join(root, 'src'), (p) => p.endsWith('.cs'));
-if (sourceFiles.length && allKinds.size) {
-  const source = sourceFiles.map(read).join('\n');
-  for (const kind of allKinds) {
-    if (!source.includes(`"${kind}"`)) errors.push(`src: failure kind "${kind}" from design.md §5 is not in the source`);
+// The most recently archived design that defines them holds the failure kinds and settings that are
+// built: the code must match it. Kinds and settings that only an open change defines are pending, and
+// so are built ones that an open change drops (each open design carries its full §5 and §8 tables).
+const builtKinds = new Set();
+const builtSettings = new Set();
+const archiveDir = join(changesDir, 'archive');
+if (existsSync(archiveDir)) {
+  const archived = readdirSync(archiveDir).filter((d) => statSync(join(archiveDir, d)).isDirectory()).sort().reverse();
+  for (const name of archived) {
+    const designPath = join(archiveDir, name, 'design.md');
+    if (!existsSync(designPath)) continue;
+    const design = read(designPath);
+    if (!builtKinds.size) {
+      const kinds = firstColumnCodes(section(design, 5));
+      if (kinds.length) { kinds.forEach((k) => builtKinds.add(k)); notes.push(`kinds: built set from archived ${name}`); }
+    }
+    if (!builtSettings.size) {
+      const settings = firstColumnCodes(section(design, 8));
+      if (settings.length) { settings.forEach((s) => builtSettings.add(s)); notes.push(`settings: built set from archived ${name}`); }
+    }
+    if (builtKinds.size && builtSettings.size) break;
   }
 }
+const target = (open, built) => (open.size ? open : built);
+const targetKinds = target(allKinds, builtKinds);
+const targetSettings = target(allSettings, builtSettings);
+
+// ------------------------------------------------------------------ code
+const sourceFiles = walk(join(root, 'src'), (p) => p.endsWith('.cs'));
+if (sourceFiles.length && targetKinds.size) {
+  const source = sourceFiles.map(read).join('\n');
+  const pendingKinds = [];
+  for (const kind of targetKinds) {
+    if (source.includes(`"${kind}"`)) continue;
+    if (builtKinds.has(kind)) errors.push(`src: failure kind "${kind}" from design.md §5 is not in the source`);
+    else pendingKinds.push(kind);
+  }
+  if (pendingKinds.length) notes.push(`kinds: pending in open changes, not yet in the source: ${pendingKinds.join(', ')}`);
+}
 const optionsFile = sourceFiles.find((p) => p.endsWith('InventoryApiOptions.cs'));
-if (optionsFile && allSettings.size) {
+if (optionsFile && targetSettings.size) {
   const props = new Set(
     [...read(optionsFile).matchAll(/public\s+[\w<>?,\s\[\]]+\s+(\w+)\s*\{\s*get;/g)].map((m) => m[1]),
   );
-  for (const s of allSettings) if (!props.has(s)) errors.push(`${rel(optionsFile)}: setting ${s} from design.md §8 has no property`);
-  for (const p of props) if (!allSettings.has(p)) errors.push(`${rel(optionsFile)}: property ${p} is not in design.md §8`);
+  const pendingSettings = [];
+  for (const s of targetSettings) {
+    if (props.has(s)) continue;
+    if (builtSettings.has(s)) errors.push(`${rel(optionsFile)}: setting ${s} from design.md §8 has no property`);
+    else pendingSettings.push(s);
+  }
+  for (const p of props) {
+    if (targetSettings.has(p)) continue;
+    if (builtSettings.has(p)) pendingSettings.push(`${p} (dropped)`);
+    else errors.push(`${rel(optionsFile)}: property ${p} is not in design.md §8`);
+  }
+  if (pendingSettings.length) notes.push(`settings: pending in open changes: ${pendingSettings.join(', ')}`);
 }
 
 // ------------------------------------------------------------------ scenarios
@@ -141,6 +183,39 @@ const pending = new Set(
   changeDirs.flatMap((c) => walk(join(changesDir, c, 'specs'), (p) => p.endsWith('spec.md')).flatMap(scenarios)),
 );
 
+// Built scenarios that an open change retires: every scenario of a requirement it removes, and those a
+// modified requirement no longer has. They need no test while the change is open; once it is archived
+// they leave openspec/specs and a test that still names one is reported as naming no spec.
+function requirementScenarios(text, capability) {
+  const byRequirement = new Map();
+  for (const block of text.split(/^(?=### Requirement:)/m)) {
+    const name = /^### Requirement:\s*(.+?)\s*$/m.exec(block)?.[1];
+    if (!name) continue;
+    byRequirement.set(name, [...block.matchAll(/^#### Scenario:\s*(.+?)\s*$/gm)].map((m) => `${capability}/${m[1]}`));
+  }
+  return byRequirement;
+}
+const retiring = new Set();
+for (const change of changeDirs) {
+  for (const delta of walk(join(changesDir, change, 'specs'), (p) => p.endsWith('spec.md'))) {
+    const capability = delta.split(sep).at(-2);
+    const builtPath = join(root, 'openspec', 'specs', capability, 'spec.md');
+    if (!existsSync(builtPath)) continue;
+    const builtRequirements = requirementScenarios(read(builtPath), capability);
+    const text = read(delta);
+    for (const [heading, keep] of [['REMOVED', false], ['MODIFIED', true]]) {
+      const start = text.search(new RegExp(`^## ${heading} Requirements`, 'm'));
+      if (start < 0) continue;
+      const rest = text.slice(start + 3);
+      const end = rest.search(/^## /m);
+      const part = end < 0 ? rest : rest.slice(0, end);
+      for (const [name, changed] of requirementScenarios(part, capability)) {
+        for (const s of builtRequirements.get(name) ?? []) if (!keep || !changed.includes(s)) retiring.add(s);
+      }
+    }
+  }
+}
+
 const tested = new Map();
 for (const file of walk(join(root, 'tests'), (p) => p.endsWith('.cs'))) {
   for (const m of read(file).matchAll(/Trait\(\s*"Scenario"\s*,\s*"([^"]+)"\s*\)/g)) {
@@ -152,10 +227,12 @@ for (const [name, files] of tested) {
   if (!built.has(name) && !pending.has(name)) errors.push(`${files[0]}: test names scenario "${name}", which no spec defines`);
 }
 for (const name of built) {
-  if (!tested.has(name)) errors.push(`openspec/specs: built scenario "${name}" has no test`);
+  if (!tested.has(name) && !retiring.has(name)) errors.push(`openspec/specs: built scenario "${name}" has no test`);
 }
 const pendingUntested = [...pending].filter((s) => !tested.has(s) && !built.has(s));
+const retiringTested = [...retiring].filter((s) => tested.has(s));
 notes.push(`scenarios: ${built.size} built, ${pending.size} in open changes, ${tested.size} referenced by tests, ${pendingUntested.length} pending without a test`);
+if (retiring.size) notes.push(`scenarios: ${retiring.size} built scenario(s) retired by open changes, ${retiringTested.length} still named by tests`);
 
 // ------------------------------------------------------------------ report
 for (const n of notes) console.log(`note   ${n}`);

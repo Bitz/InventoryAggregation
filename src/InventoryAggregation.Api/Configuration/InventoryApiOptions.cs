@@ -47,6 +47,18 @@ public sealed class InventoryApiOptions
 
     public TimeSpan RateLimitWindow { get; set; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>How often the stored report is refreshed, from one scheduled start to the next (design.md D30).</summary>
+    public TimeSpan RefreshInterval { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>The wait after a failed refresh, doubling per further failure up to <see cref="RefreshInterval"/> (design.md D32).</summary>
+    public TimeSpan RefreshRetryDelay { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>Age past which the stored report is served with <c>overdue: true</c> (design.md D30).</summary>
+    public TimeSpan StaleAfter { get; set; } = TimeSpan.FromHours(1);
+
+    /// <summary>With <c>fresh=true</c>, a stored report younger than this is served as is (design.md D31).</summary>
+    public TimeSpan FreshMaxAge { get; set; } = TimeSpan.FromSeconds(30);
+
     /// <summary>The part of the settings Core needs.</summary>
     public InventoryReportSettings ToReportSettings() => new()
     {
@@ -57,6 +69,10 @@ public sealed class InventoryApiOptions
         MaxPages = MaxPages,
         CollectionTimeout = CollectionTimeout,
         InvalidRecordPolicy = InvalidRecordPolicy,
+        RefreshInterval = RefreshInterval,
+        RefreshRetryDelay = RefreshRetryDelay,
+        StaleAfter = StaleAfter,
+        FreshMaxAge = FreshMaxAge,
     };
 
     /// <summary>Never prints the key or the upstream address.</summary>

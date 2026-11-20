@@ -40,6 +40,8 @@ internal static class Components
         services.AddSingleton<CategoryAggregator>();
         services.AddTransient<InventoryCollector>();
         services.AddSingleton<InventoryReportService>();
+        services.AddSingleton<ReportStore>();
+        services.AddSingleton<ReportRefresher>();
         return services.BuildServiceProvider();
     }
 }

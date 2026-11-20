@@ -108,6 +108,31 @@ internal static class FakeClock
         return await task;
     }
 
+    /// <summary>Advances fake time in small steps until <paramref name="condition"/> holds, as <see cref="Drive{T}"/> does for a task.</summary>
+    public static async Task DriveUntil(FakeTimeProvider time, Func<bool> condition, TimeSpan? step = null, TimeSpan? limit = null)
+    {
+        var increment = step ?? TimeSpan.FromMilliseconds(250);
+        var budget = limit ?? TimeSpan.FromMinutes(5);
+        var advanced = TimeSpan.Zero;
+
+        while (!condition())
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(1), CancellationToken.None);
+            if (condition())
+            {
+                break;
+            }
+
+            if (advanced >= budget)
+            {
+                throw new TimeoutException($"Condition still false after {budget} of fake time.");
+            }
+
+            time.Advance(increment);
+            advanced += increment;
+        }
+    }
+
     /// <summary>Waits, without a timer, until a condition holds. Fails after 10 s of real time.</summary>
     public static async Task Until(Func<bool> condition, string what)
     {

@@ -1,11 +1,16 @@
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Globalization;
+using InventoryAggregation.Api.Configuration;
 using InventoryAggregation.Core.Reporting;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace InventoryAggregation.Api.Endpoints;
 
 /// <summary>
-/// <c>GET /api/inventory/categories</c>. Calls the report service, maps success to the response
-/// contract and failure to Problem Details, and does nothing else.
+/// <c>GET /api/inventory/categories</c>. Reads the stored report, or asks the refresher for a live one
+/// with <c>fresh=true</c>, maps it to the response contract with its freshness, and does nothing else.
 /// </summary>
 public static partial class CategoryReportEndpoint
 {
@@ -17,38 +22,81 @@ public static partial class CategoryReportEndpoint
             .WithName("GetCategoryReport")
             .WithSummary("Inventory figures per product category")
             .WithDescription(
-                "Collects every record from the Inventory API, verifies the dataset is complete and consistent, " +
-                "and returns per-category figures. Never returns partial figures: when completeness cannot be " +
-                "proven the response is Problem Details whose 'kind' names the reason.")
+                "Returns per-category figures from the latest report the service has proven complete and consistent. " +
+                "Reports are refreshed in the background; 'freshness' and the Age header say how old the figures are " +
+                "and whether the latest refresh failed. Never returns partial figures. With fresh=true the caller waits " +
+                "for a live collection unless the stored report is very recent. The only failure for an upstream problem " +
+                "is 503 with kind 'report-not-ready', while no good report has been produced since the service started.")
             .Produces<CategoryReportResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status500InternalServerError)
-            .ProducesProblem(StatusCodes.Status502BadGateway)
-            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
-            .ProducesProblem(StatusCodes.Status504GatewayTimeout);
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
         return endpoints;
     }
 
     private static async Task<IResult> GetReportAsync(
-        InventoryReportService reports,
+        ReportRefresher refresher,
+        IOptions<InventoryApiOptions> options,
+        TimeProvider time,
         HttpContext context,
-        [FromQuery] string? include,
+        [FromQuery, Description("true to wait for a live collection, unless the stored report is younger than FreshMaxAge (30 s by default).")] bool? fresh,
+        [FromQuery, Description("Comma-separated extras; 'audit' adds the lineage of the run that produced the served report.")] string? include,
         [FromServices] ILoggerFactory loggerFactory)
     {
-        try
+        RefreshStatus status;
+        if (fresh == true)
         {
-            var result = await reports.GetReportAsync(context.RequestAborted);
-            return result.IsSuccess
-                ? TypedResults.Ok(CategoryReportResponse.From(result.Report, IncludesAudit(include)))
-                : FailureResponses.ToResult(result.Failure, context);
+            try
+            {
+                status = await refresher.GetFreshAsync(context.RequestAborted);
+            }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                // The caller left; the collection carries on for everyone else (design.md D33). Not an error.
+                var logger = loggerFactory.CreateLogger(typeof(CategoryReportEndpoint));
+                LogCallerLeft(logger);
+                return Results.Empty;
+            }
         }
-        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        else
         {
-            // The caller left; nobody is waiting for an answer. Not an error.
-            var logger = loggerFactory.CreateLogger(typeof(CategoryReportEndpoint));
-            LogCallerLeft(logger);
-            return Results.Empty;
+            status = refresher.Status();
         }
+
+        var now = time.GetUtcNow();
+        var settings = options.Value;
+        if (status.Store.Latest is not { } stored)
+        {
+            return FailureResponses.NotReady(status, now, settings.RateLimitWindow, context);
+        }
+
+        LinkToRefresh(stored);
+        var response = CategoryReportResponse.From(stored, status, now, settings.StaleAfter, IncludesAudit(include));
+        context.Response.Headers.Age = response.Freshness.AgeSeconds.ToString(CultureInfo.InvariantCulture);
+        return TypedResults.Ok(response);
+    }
+
+    /// <summary>
+    /// Points the request's span at the refresh that produced the served report (design.md D38), once: a
+    /// <c>fresh=true</c> request that waited on that refresh already links to it.
+    /// </summary>
+    private static void LinkToRefresh(StoredReport stored)
+    {
+        if (Activity.Current is not { } request || stored.Refresh == default)
+        {
+            return;
+        }
+
+        foreach (var link in request.Links)
+        {
+            if (link.Context == stored.Refresh)
+            {
+                return;
+            }
+        }
+
+        request.AddLink(new ActivityLink(stored.Refresh));
     }
 
     /// <summary><c>include</c> is a comma-separated list; <c>audit</c> adds the run's lineage. Other values are ignored.</summary>
@@ -56,6 +104,6 @@ public static partial class CategoryReportEndpoint
         include?.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .Contains("audit", StringComparer.OrdinalIgnoreCase) == true;
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "The caller disconnected before the report was ready")]
+    [LoggerMessage(Level = LogLevel.Information, Message = "The caller disconnected before the live report was ready; the collection continues")]
     private static partial void LogCallerLeft(ILogger logger);
 }

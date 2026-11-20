@@ -17,7 +17,8 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Registers the service's own components: validated options, the typed upstream client with its
     /// resilience pipeline and shared rate limiter, the collector, validator, aggregator, report
-    /// service, and <see cref="TimeProvider.System"/> unless a clock is already registered.
+    /// service, the report store and refresher with the hosted service that runs its schedule, and
+    /// <see cref="TimeProvider.System"/> unless a clock is already registered.
     /// </summary>
     public static IServiceCollection AddInventoryAggregation(this IServiceCollection services, IConfiguration configuration)
     {
@@ -37,6 +38,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<CategoryAggregator>();
         services.AddTransient<InventoryCollector>();
         services.AddSingleton<InventoryReportService>();
+        services.AddSingleton<ReportStore>();
+        services.AddSingleton<ReportRefresher>();
+        services.AddHostedService<ReportRefreshService>();
 
         services.AddSingleton(sp =>
         {
