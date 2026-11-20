@@ -54,9 +54,9 @@ aggregator, upstream client, rate limiter) should change; if it has to, stop and
       on-demand use on one instance" and "No caching, no persistence, no last-good fallback" items.
 
 ## 7. Verify
-- [ ] `dotnet build` with 0 warnings, `dotnet test`, `npm run spec:check`.
-- [ ] Run against the fake upstream: healthy, then a failing mode; show `stale` true with the old figures,
+- [x] `dotnet build` with 0 warnings, `dotnet test`, `npm run spec:check`.
+- [x] Run against the fake upstream: healthy, then a failing mode; show `stale` true with the old figures,
       then recovery. Run with a wrong key from start; show `503 report-not-ready`.
-- [ ] Run once against the real upstream; compare the figures with `recordings/expected-report.json`.
-- [ ] Archive the change (`openspec archive serve-last-good-report`) once everything above passes, and
+- [x] Run once against the real upstream; compare the figures with `recordings/expected-report.json`.
+- [x] Archive the change (`openspec archive serve-last-good-report`) once everything above passes, and
       confirm `spec:check` reports no pending scenarios.
