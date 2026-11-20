@@ -171,6 +171,56 @@ public sealed class TelemetryTests
         Assert.All(measurements, m => Assert.Equal("status 500", m.Tags["inventory.retry.reason"]));
     }
 
+    [Fact]
+    [Trait("Scenario", "service-telemetry/Healthy report progress")]
+    public async Task Each_page_the_end_check_and_the_outcome_are_logged_under_one_id()
+    {
+        var upstream = new FakeUpstream(TimeProvider.System);
+        await using var api = new TestApi { Upstream = (request, _, _) => Task.FromResult(upstream.Respond(request)) };
+
+        using var response = await api.CreateClient().GetAsync(Route, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var lines = api.Logs.GetSnapshot()
+            .Where(r => r.Level == Microsoft.Extensions.Logging.LogLevel.Information && r.Message.StartsWith("report ", StringComparison.Ordinal))
+            .Select(r => r.Message)
+            .ToList();
+        var id = lines[0].Split(':')[0];
+        Assert.All(lines, line => Assert.StartsWith(id + ":", line, StringComparison.Ordinal));
+        Assert.NotEqual("report -", id);
+        for (var page = 1; page <= 7; page++)
+        {
+            Assert.Single(lines, l => l.StartsWith($"{id}: page {page}/7: ", StringComparison.Ordinal));
+        }
+
+        Assert.Single(lines, l => l.StartsWith($"{id}: page 8 (end check): 0 records, end confirmed", StringComparison.Ordinal));
+        Assert.Single(lines, l => l.StartsWith($"{id}: collected 157 records over 7 pages in 8 requests", StringComparison.Ordinal));
+        Assert.Contains(lines, l => l.StartsWith($"{id}: page 2/7: 26 records (1 attempt(s), ", StringComparison.Ordinal));
+        Assert.All(api.Logs.GetSnapshot(), r =>
+        {
+            Assert.DoesNotContain("inventory.test", r.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(ClientHarness.ApiKey, r.Message, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
+    [Trait("Scenario", "service-telemetry/Waiting for a permit")]
+    public async Task A_request_that_waits_for_a_permit_says_so()
+    {
+        var upstream = new FakeUpstream(TimeProvider.System);
+        await using var harness = new ClientHarness(
+            (request, _, _) => Task.FromResult(upstream.Respond(request)),
+            new Dictionary<string, string?> { ["InventoryApi:RateLimitPermits"] = "1" });
+        var client = harness.Client();
+
+        Assert.True((await client.GetPageAsync(1, 25, Ct)).IsSuccess);
+        Assert.True((await harness.Drive(client.GetPageAsync(2, 25, Ct), TimeSpan.FromSeconds(1))).IsSuccess);
+
+        var wait = Assert.Single(harness.Logs.GetSnapshot(), r => r.Message.Contains("for a rate-limit permit", StringComparison.Ordinal));
+        Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Information, wait.Level);
+        Assert.Matches(@"^report -: page 2 waited 1\d\.\d s for a rate-limit permit$", wait.Message);
+    }
+
     /// <summary>Sends the report request inside a known trace, so spans from tests running in parallel can be told apart.</summary>
     private static Task<HttpResponseMessage> SendTracedAsync(TestApi api, ActivityTraceId traceId)
     {

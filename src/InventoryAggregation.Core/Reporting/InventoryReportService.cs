@@ -120,6 +120,12 @@ public sealed partial class InventoryReportService(
     {
         // One span per shared collection, a child of the request that started it (design.md D25).
         using var activity = InventoryTelemetry.ActivitySource.StartActivity("collect inventory");
+
+        // A short id for progress lines: the trace id's start when there is a trace, so a log line leads
+        // to its trace; otherwise random.
+        ReportRun.Begin(activity is not null
+            ? activity.TraceId.ToHexString()[..6]
+            : Convert.ToHexStringLower(BitConverter.GetBytes(Random.Shared.Next()))[..6]);
         var started = timeProvider.GetTimestamp();
         var outcome = "internal-error";
         try

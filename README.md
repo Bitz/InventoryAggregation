@@ -136,6 +136,24 @@ evidence (`page`, `expectedCount`, `collectedCount`, `duplicateIds`, `conflictin
 Bodies never contain the key, the upstream address or a stack trace (stack traces appear in
 `Development` only).
 
+## Progress in the console
+
+Each report logs its progress at `Information` level, one line per upstream page, prefixed with a short
+id of the collection (the start of its trace id), so concurrent reports can be told apart:
+
+```
+report 7f3a91: page 1/7: 25 records (1 attempt(s), 180 ms)
+report 7f3a91: page 2/7: 26 records (1 attempt(s), 175 ms)
+report 7f3a91: page 6 waited 9.8 s for a rate-limit permit
+report 7f3a91: page 8 (end check): 0 records, end confirmed (1 attempt(s), 160 ms)
+report 7f3a91: collected 157 records over 7 pages in 8 requests, 10.4 s (0 page refetches, 1 collection attempts)
+```
+
+A failed fetch shows its failure kind and status instead of a record count. Retries, refetches and
+failures still log at `Warning`. No line carries the upstream address or the key. To quiet the progress
+lines, raise the level for the service's categories, for example
+`Logging__LogLevel__InventoryAggregation=Warning`.
+
 ## Telemetry
 
 Logs, traces and metrics go through OpenTelemetry. Nothing leaves the process unless an OTLP endpoint is

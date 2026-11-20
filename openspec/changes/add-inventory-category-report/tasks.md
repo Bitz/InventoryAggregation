@@ -120,3 +120,5 @@ was left and how it would be done into the README's limitations section instead 
 - [x] Upstream span redaction (no host, port or full URL); HTTP client metrics not collected.
 - [x] Tests for every `service-telemetry` scenario; one manual export to a local OTLP listener, with the payload
       searched for the key and the upstream address.
+- [x] Progress logged per page at `Information`, prefixed with the collection's short id: each page, the end
+      check, rate-limit permit waits and the closing line (`service-telemetry`, "Progress is logged per page").

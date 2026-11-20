@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using InventoryAggregation.Core.Records;
 using InventoryAggregation.Core.Telemetry;
 using Microsoft.Extensions.Logging;
@@ -68,6 +69,7 @@ public sealed partial class InventoryCollector(
         using var deadline = new CancellationTokenSource(settings.CollectionTimeout, timeProvider);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         var counters = new Counters();
+        var started = timeProvider.GetTimestamp();
 
         try
         {
@@ -79,7 +81,8 @@ public sealed partial class InventoryCollector(
 
                 if (pass.Dataset is { } dataset)
                 {
-                    LogCollected(dataset.Records.Count, dataset.PagesFetched, dataset.Requests, dataset.PageRefetches, dataset.CollectionAttempts);
+                    var seconds = timeProvider.GetElapsedTime(started).TotalSeconds;
+                    LogCollected(ReportRun.Id, dataset.Records.Count, dataset.PagesFetched, dataset.Requests, seconds, dataset.PageRefetches, dataset.CollectionAttempts);
                     return CollectionResult.Success(dataset);
                 }
 
@@ -225,8 +228,21 @@ public sealed partial class InventoryCollector(
                 LogRefetching(page, fetch - 1, lastProblem!);
             }
 
+            var fetchStarted = timeProvider.GetTimestamp();
             var result = await source.GetPageAsync(page, settings.PageSize, cancellationToken).ConfigureAwait(false);
             counters.AddRequests(result.Attempts);
+            var elapsed = timeProvider.GetElapsedTime(fetchStarted).TotalMilliseconds;
+            var totalPages = reference?.TotalPages ?? result.Page?.TotalPages;
+
+            if (result.IsSuccess)
+            {
+                LogPage(ReportRun.Id, page, totalPages!.Value, result.Page.Records.Count, result.Attempts, elapsed);
+            }
+            else
+            {
+                var status = StatusText(result.Failure.StatusCode);
+                LogPageFailed(ReportRun.Id, page, result.Failure.Kind, status, result.Attempts, elapsed);
+            }
 
             if (!result.IsSuccess)
             {
@@ -343,12 +359,18 @@ public sealed partial class InventoryCollector(
                 metrics.PageRefetched();
             }
 
+            var fetchStarted = timeProvider.GetTimestamp();
             var result = await source.GetPageAsync(page, settings.PageSize, cancellationToken).ConfigureAwait(false);
             counters.AddRequests(result.Attempts);
+            var elapsed = timeProvider.GetElapsedTime(fetchStarted).TotalMilliseconds;
 
             if (result.IsSuccess)
             {
-                return CheckEndPage(result.Page, page);
+                var problem = CheckEndPage(result.Page, page);
+                var answer = string.Create(CultureInfo.InvariantCulture, $"{result.Page.Records.Count} records");
+                var verdict = problem is null ? "end confirmed" : "records past the end";
+                LogEndCheck(ReportRun.Id, page, answer, verdict, result.Attempts, elapsed);
+                return problem;
             }
 
             var failure = result.Failure with { Page = result.Failure.Page ?? page };
@@ -356,8 +378,12 @@ public sealed partial class InventoryCollector(
             // A 400 past the last page is the other accepted way to say "no more data" (design.md D8).
             if (failure is { Kind: FailureKinds.UpstreamMisconfigured, StatusCode: 400 })
             {
+                LogEndCheck(ReportRun.Id, page, "status 400", "end confirmed", result.Attempts, elapsed);
                 return null;
             }
+
+            var endStatus = StatusText(failure.StatusCode);
+            LogPageFailed(ReportRun.Id, page, failure.Kind, endStatus, result.Attempts, elapsed);
 
             if (failure.Kind == FailureKinds.MalformedResponse && fetch < fetches)
             {
@@ -457,6 +483,8 @@ public sealed partial class InventoryCollector(
             [.. duplicates]), null);
     }
 
+    private static string StatusText(int? status) => status?.ToString(CultureInfo.InvariantCulture) ?? "none";
+
     private sealed class Counters
     {
         private int _requests;
@@ -473,8 +501,17 @@ public sealed partial class InventoryCollector(
         public void AddRefetch() => Interlocked.Increment(ref _pageRefetches);
     }
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Collected {Records} records over {Pages} pages in {Requests} requests ({Refetches} page refetches, {Attempts} collection attempts)")]
-    private partial void LogCollected(int records, int pages, int requests, int refetches, int attempts);
+    [LoggerMessage(Level = LogLevel.Information, Message = "report {ReportId}: collected {Records} records over {Pages} pages in {Requests} requests, {ElapsedSeconds:0.0} s ({Refetches} page refetches, {Attempts} collection attempts)")]
+    private partial void LogCollected(string reportId, int records, int pages, int requests, double elapsedSeconds, int refetches, int attempts);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "report {ReportId}: page {Page}/{TotalPages}: {Records} records ({Attempts} attempt(s), {ElapsedMs:0} ms)")]
+    private partial void LogPage(string reportId, int page, int totalPages, int records, int attempts, double elapsedMs);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "report {ReportId}: page {Page}: {Kind} (status {Status}, {Attempts} attempt(s), {ElapsedMs:0} ms)")]
+    private partial void LogPageFailed(string reportId, int page, string kind, string status, int attempts, double elapsedMs);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "report {ReportId}: page {Page} (end check): {Answer}, {Verdict} ({Attempts} attempt(s), {ElapsedMs:0} ms)")]
+    private partial void LogEndCheck(string reportId, int page, string answer, string verdict, int attempts, double elapsedMs);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Fetching page {Page} again (refetch {Refetch}): {Problem}")]
     private partial void LogRefetching(int page, int refetch, string problem);

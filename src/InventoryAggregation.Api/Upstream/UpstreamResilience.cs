@@ -60,7 +60,19 @@ internal static partial class UpstreamResilience
         builder.AddRateLimiter(new RateLimiterStrategyOptions
         {
             Name = "pacing",
-            RateLimiter = args => limiter.AcquireAsync(1, args.Context.CancellationToken),
+            RateLimiter = async args =>
+            {
+                var waitStarted = time.GetTimestamp();
+                var lease = await limiter.AcquireAsync(1, args.Context.CancellationToken).ConfigureAwait(false);
+                var waited = time.GetElapsedTime(waitStarted);
+                if (waited >= TimeSpan.FromMilliseconds(100))
+                {
+                    var page = PageOf(args.Context);
+                    LogPermitWait(logger, ReportRun.Id, page, waited.TotalSeconds);
+                }
+
+                return lease;
+            },
         });
 
         builder.AddTimeout(new TimeoutStrategyOptions { Name = "attempt-timeout", Timeout = options.AttemptTimeout });
@@ -109,4 +121,7 @@ internal static partial class UpstreamResilience
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Page {Page} attempt {Attempt} failed with {Outcome}; retrying in {Delay}")]
     private static partial void LogRetry(ILogger logger, int? page, int attempt, string outcome, TimeSpan delay);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "report {ReportId}: page {Page} waited {WaitedSeconds:0.0} s for a rate-limit permit")]
+    private static partial void LogPermitWait(ILogger logger, string reportId, int? page, double waitedSeconds);
 }

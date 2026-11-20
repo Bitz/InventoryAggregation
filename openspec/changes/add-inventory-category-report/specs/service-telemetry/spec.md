@@ -37,6 +37,20 @@ HTTP client's own metrics, which are tagged with the upstream host, SHALL NOT be
 - **WHEN** an upstream request span ends with `url.full`, `server.address` and `server.port` set by the HTTP client
 - **THEN** `url.full` holds only the path and query, and `server.address` and `server.port` are removed
 
+### Requirement: Progress is logged per page
+At `Information` level the service SHALL log a line per page fetch (page, total pages, records or failure
+kind, attempts, duration), one for the end check, one per rate-limit permit wait, and a closing line with
+records, pages, requests and elapsed time. Each line SHALL start with a short id of the shared collection
+and SHALL NOT contain the upstream address or the key.
+
+#### Scenario: Healthy report progress
+- **WHEN** a report collects 7 pages and the end check
+- **THEN** the log holds a line for each of pages 1 to 7 with `/7`, an end-check line and a closing line, all with the same collection id
+
+#### Scenario: Waiting for a permit
+- **WHEN** an upstream request has to wait 10 s for a rate-limit permit
+- **THEN** a line names the page and the wait
+
 ### Requirement: Report outcomes and retries are measured
 The service SHALL count collections by outcome (`success` or the failure kind), record their duration, and
 count upstream retries, page refetches and re-collections, on a meter named `InventoryAggregation`.
