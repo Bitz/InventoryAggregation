@@ -19,8 +19,9 @@ answer wrongly, and says why.
 - ASP.NET Core minimal API for the host and endpoint.
 - `IHttpClientFactory` typed client for the upstream, with `Microsoft.Extensions.Http.Resilience`
   (Polly v8) for retries and timeouts.
+- `Microsoft.AspNetCore.OpenApi` for the OpenAPI document (Development only).
 - `System.Text.Json` for (de)serialization; money is `decimal` end to end.
-- xUnit for tests, `Microsoft.Extensions.TimeProvider.Testing` (`FakeTimeProvider`) so retry and
+- xUnit v3 for tests, `Microsoft.Extensions.TimeProvider.Testing` (`FakeTimeProvider`) so retry and
   timeout tests do not sleep, `Microsoft.AspNetCore.Mvc.Testing` for endpoint tests.
 
 ## Solution layout

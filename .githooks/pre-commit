@@ -1,0 +1,13 @@
+#!/bin/sh
+# Runs the spec checks when a commit touches specs, source, tests or the checker itself.
+# Enable once per clone:  git config core.hooksPath .githooks
+if git diff --cached --name-only | grep -qE '^(openspec/|src/|tests/|tools/openspec/)'; then
+  if [ ! -d node_modules ]; then
+    echo "spec check: run 'npm ci' first (or commit with --no-verify to skip)" >&2
+    exit 1
+  fi
+  npm run --silent spec:check || {
+    echo "spec check failed; fix the drift above before committing" >&2
+    exit 1
+  }
+fi

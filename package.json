@@ -1,0 +1,15 @@
+{
+  "name": "inventory-aggregation-spec-tools",
+  "private": true,
+  "description": "Spec validation and drift checks for the Inventory Aggregation Service",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "spec:validate": "openspec validate --all --strict --no-interactive",
+    "spec:archived": "openspec validate --archived --no-interactive",
+    "spec:drift": "node tools/openspec/check-drift.mjs",
+    "spec:check": "npm run --silent spec:validate && npm run --silent spec:drift"
+  },
+  "devDependencies": {
+    "@fission-ai/openspec": "2.1.1"
+  }
+}

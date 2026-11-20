@@ -44,6 +44,24 @@ times (default 3, so 4 attempts) with exponential backoff from `BaseDelay` (defa
 - **WHEN** page 2 returns `503` without `Retry-After` on all 4 attempts
 - **THEN** the result is a failure of kind `upstream-unavailable` with 4 attempts and last status `503`
 
+### Requirement: Requests are paced to the upstream's rate limit
+All requests to the upstream SHALL pass through one rate limiter shared by the whole application,
+allowing at most `RateLimitPermits` requests (default 5) per `RateLimitWindow` (default 10 s), every
+retry included. A request over the limit SHALL wait for a permit rather than be sent, and SHALL stop
+waiting when its caller cancels or the collection deadline passes (`design.md` D22).
+
+#### Scenario: A collection larger than one window
+- **WHEN** a collection needs 8 requests under a limit of 5 per 10 s
+- **THEN** 5 are sent in the first window, the rest wait for the next, and the service causes no `429` itself
+
+#### Scenario: Two reports at once
+- **WHEN** two report requests run together
+- **THEN** their upstream requests share the same permits and together never exceed 5 per 10 s
+
+#### Scenario: Throttled anyway
+- **WHEN** the upstream still answers `429` with `Retry-After: 6` because another client shares the key
+- **THEN** the retry waits 6 s, as for any `Retry-After`
+
 ### Requirement: Retry-After is honoured up to a cap
 When a transient response carries `Retry-After` (seconds or HTTP-date), the next attempt SHALL wait that
 long instead of the backoff delay, if it is no longer than `MaxRetryAfter` (default 10 s). If it is

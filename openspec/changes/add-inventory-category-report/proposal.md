@@ -13,7 +13,8 @@ computes anything.
 
 ## What changes
 
-- **inventory-source**: a typed upstream client that fetches one page, retries transient failures
+- **inventory-source**: a typed upstream client that fetches one page, paces itself to the upstream's
+  rate limit, retries transient failures
   with bounded backoff, fails fast on the rest, and returns a classified result instead of throwing.
 - **inventory-collection**: walks every page, checks each page against the first, reconciles the
   collected set against the reported total, confirms the end of the data, and refetches when a static
@@ -32,10 +33,11 @@ computes anything.
 - New repository; no existing behaviour changes.
 - One outbound dependency: the Inventory API. Its key is a secret held in user secrets locally and an
   environment variable elsewhere.
-- Upstream load per report request: `ceil(totalRecords / 25) + 1` requests when healthy, more on
-  retries and refetches, bounded by `MaxConcurrency` and `CollectionTimeout`.
+- Upstream load per report request: `ceil(totalRecords / 25) + 1` requests when healthy (8 today), more
+  on retries and refetches. The upstream allows 5 requests per 10 s, so a report takes just over 10 s
+  and concurrent reports queue for the same permits.
 
 ## Decisions
 
 The judgement calls (zero-quantity categories, ties, rounding, category spelling, invalid records,
-partial results, status codes) are D1–D18 in `design.md` §4.
+partial results, status codes) are D1–D24 in `design.md` §4.

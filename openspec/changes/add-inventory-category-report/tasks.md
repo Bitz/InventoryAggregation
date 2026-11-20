@@ -4,15 +4,21 @@ Time box: the whole change is meant to fit a short build. If a section runs over
 was left and how it would be done into the README's limitations section instead of rushing it.
 
 ## 0. Probe the upstream first
-- [ ] Get the base URL and API key; store the key with `dotnet user-secrets` (never in a file in the repo).
-- [ ] Requests use `C:\Windows\System32\curl.exe` with `-A ""` (no User-Agent), only the API key header
+- [x] Base URL in user secrets (id `inventory-aggregation-7d3f2c1e`, reused as the Api project's
+      `UserSecretsId`), so it stays out of the repo too.
+- [x] API key in the same store: `dotnet user-secrets set "InventoryApi:ApiKey" "<key>" --id inventory-aggregation-7d3f2c1e`.
+- [x] Requests use `C:\Windows\System32\curl.exe` with `-A ""` (no User-Agent), only the API key header
       added, paced rather than burst.
-- [ ] Throwaway script (outside the repo, or under the git-ignored `recordings/`): fetch every page at
-      page size 25 a few times, plus page `totalPages + 1`, page 0 and page size 26. Save the raw
-      responses with status, headers and timing.
-- [ ] Diff the runs. Record every behaviour seen (status codes, `Retry-After`, duplicates, drift,
-      short pages, bad records, latency) in `design.md` §7, and close the questions in §6.
-- [ ] Revisit the defaults in `service-configuration` against what was seen.
+- [x] `tools/probe/Invoke-UpstreamProbe.ps1`: every page at size 25 three times, one pass each at 20
+      and 7, past-the-end, and out-of-range edges. Raw responses go to the git-ignored `recordings/`.
+      Headers checked against a local echo listener first.
+- [x] `tools/probe/Get-ProbeSummary.ps1`: statuses, latency, paging checks, cross-pass differences,
+      conflicting ids, record quality, category spellings.
+- [x] Run both. Record every behaviour seen in `probe-findings.md`, its short form in `design.md` §7,
+      and close the questions in §6 (2026-11-20).
+- [x] Spec changes the data forced: page overlap (D21), rate-limit pacing (D22).
+- [x] Revisit the defaults in `service-configuration` against what was seen: `RateLimitPermits` and
+      `RateLimitWindow` added; `MaxRetryAfter` 10 s covers the 6 s maximum seen; the rest unchanged.
 
 ## 1. Scaffold
 - [ ] `global.json` pinned to the .NET 10 SDK band, `rollForward: latestFeature`.
@@ -33,6 +39,8 @@ was left and how it would be done into the README's limitations section instead 
 - [ ] Resilience handler: total timeout ▸ retry (transient predicate, backoff with jitter,
       `Retry-After` delay with cap) ▸ attempt timeout. Wire the pipeline's `TimeProvider` for tests.
 - [ ] Status classification and `PageResult` / failure kinds; cancellation passes through.
+- [ ] Shared rate limiter (`System.Threading.RateLimiting`, fixed window, 5 per 10 s) registered as a
+      singleton and placed so retries also take a permit (D22).
 - [ ] Retry log entries.
 
 ## 4. Collection (`inventory-collection`)
@@ -47,28 +55,33 @@ was left and how it would be done into the README's limitations section instead 
 - [ ] `RecordValidator`: all reasons per record, normalization, policy.
 - [ ] `CategoryAggregator`: zero-quantity drop, grouping and display name, figures, order.
 - [ ] `InventoryReportService`: collect ▸ validate ▸ aggregate, returns report or failure.
+- [ ] Concurrent callers share the collection in flight (D24); the shared run stops only when every waiting caller has gone.
 
 ## 6. Endpoint (`category-report-endpoint`)
 - [ ] `GET /api/inventory/categories` and response contract.
 - [ ] One failure-kind ▸ status map; Problem Details with `kind` and `traceId`; `Retry-After` on `503`.
 - [ ] Global exception handler; no stack traces outside Development.
 - [ ] `RequestAborted` passed through; cancellation not logged as an error.
+- [ ] OpenAPI document at `/openapi/v1.json` in Development only (D19), describing the success and Problem Details responses.
 
 ## 7. Tests
 - [ ] Core: validator rules and normalization; aggregator figures, rounding, ties, ordering, spelling
       variants, all-zero category; collector against a scripted page source covering every scenario in
-      `inventory-collection` (wrong page, drift, short page, overlap, conflicts, past-the-end records,
+      `inventory-collection` (wrong page, drift, short page, overlapping page, overlap with omission,
+      conflicts, past-the-end records,
       one-off glitch, too large, timeout, cancellation, concurrency bound).
 - [ ] Api: client over a scripted `HttpMessageHandler` and `FakeTimeProvider` covering every scenario in
       `inventory-source` (retry then success, exhaustion, `Retry-After` honoured and too long, fail-fast
-      statuses, unknown status, hang, truncated body, cancellation, key not in URL or logs).
+      statuses, unknown status, hang, truncated body, cancellation, key not in URL or logs, pacing at
+      5 per 10 s across two concurrent collections).
 - [ ] Api: endpoint tests with `WebApplicationFactory` and a fake page source, one per failure kind, plus
       the healthy contract and the summary arithmetic.
 - [ ] No test sleeps on real time.
 
 ## 8. Local fault stub
 - [ ] `tools/FakeInventoryApi`: a minimal app that serves a generated static dataset on
-      `/api/records` and takes a fault mode per run (`healthy`, `flaky-500`, `throttle`, `hang`,
+      `/api/records` and takes a fault mode per run (`healthy` (as observed: even-page overlap, padded mixed-case
+      categories, 5-per-10-s limit), `flaky-500`, `throttle`, `hang`,
       `drift-totals`, `overlap`, `short-page`, `wrong-page`, `conflict`, `bad-record`, `truncated`,
       `extra-page`, `unknown-status`). Lets anyone reproduce a reported upstream behaviour in minutes
       and see which failure kind the service names.
@@ -79,9 +92,10 @@ was left and how it would be done into the README's limitations section instead 
       app, running the tests, the endpoint with a sample `curl` and sample responses (success and one
       failure).
 - [ ] Architecture note, half a page: the pieces in `design.md` §1 and why the splits are where they are.
-- [ ] Assumptions and decisions: D1–D18 in plain words, and every response-shape deviation.
-- [ ] Known limitations and next steps: no caching or request coalescing (D17), single-instance only,
-      no metrics export, anything from §0–§8 left undone, and what would change with more time.
+- [ ] Assumptions and decisions: D1–D24 in plain words, and every response-shape deviation.
+- [ ] Known limitations and next steps: no caching (D17); coalescing (D24) works within one instance
+      only, so several instances would each collect and share the upstream's rate limit; no persistence
+      (D23); no metrics export, anything from §0–§8 left undone, and what would change with more time.
 
 ## 10. Verify
 - [ ] Fresh clone into an empty folder, follow the README word for word, on a machine state with only

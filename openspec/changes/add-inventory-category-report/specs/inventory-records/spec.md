@@ -4,7 +4,7 @@
 `RecordValidator` SHALL accept a raw record only if: `id` is present and positive; `name` is present and
 not blank; `category` is present and not blank after trimming; `price` is present and not negative;
 `quantity` is present, an integer and not negative; `lastUpdated` is present and parses as ISO 8601
-with an offset (`design.md` D14). A record failing any rule SHALL be rejected with every reason that
+with or without an offset (`design.md` D14). A record failing any rule SHALL be rejected with every reason that
 applies, not just the first.
 
 #### Scenario: Several problems
@@ -13,7 +13,11 @@ applies, not just the first.
 
 #### Scenario: Timestamp without offset
 - **WHEN** `lastUpdated` is `2026-10-15T12:30:00`
-- **THEN** the record is rejected for a timestamp without an offset
+- **THEN** the record is accepted with `2026-10-15T12:30:00Z` and counted as an assumed-UTC timestamp
+
+#### Scenario: Timestamp that does not parse
+- **WHEN** `lastUpdated` is `yesterday`
+- **THEN** the record is rejected for an unparseable timestamp
 
 #### Scenario: Zero quantity is valid
 - **WHEN** a record has `quantity: 0` and every other field valid

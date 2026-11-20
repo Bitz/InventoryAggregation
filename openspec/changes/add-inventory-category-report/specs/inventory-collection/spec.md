@@ -21,12 +21,24 @@ the dataset SHALL be empty and valid, with `totalPages` of 0 or 1 accepted.
 ### Requirement: Every page is checked against the reference
 For each page the collector SHALL check that:
 `page` equals the page requested; `pageSize` equals the size requested; `totalPages` and `totalRecords`
-equal the reference; `totalPages` equals `ceil(totalRecords / pageSize)`; and the number of records is
-`pageSize` on every page but the last, and `totalRecords - (totalPages - 1) × pageSize` on the last.
+equal the reference; and `totalPages` equals `ceil(totalRecords / pageSize)`.
 
 #### Scenario: Wrong page returned
 - **WHEN** a request for page 4 returns a body saying `page: 3`
 - **THEN** the page fails the check for `page`
+
+### Requirement: A page holds no fewer records than expected
+A page SHALL hold at least `pageSize` records, or `totalRecords - (totalPages - 1) × pageSize` on the
+last page. A page holding more SHALL pass; whether the extra records are harmless is settled by
+reconciliation (`design.md` D21).
+
+#### Scenario: Overlapping page
+- **WHEN** page 2 of 7 holds 26 records and its first record repeats the last record of page 1
+- **THEN** the page passes, and reconciliation collapses the repeated record
+
+#### Scenario: Short page
+- **WHEN** page 3 of 7 holds 24 records
+- **THEN** the page fails this check
 
 ### Requirement: A page that disagrees is fetched again
 A page that fails a check, or came back `malformed-response`, SHALL be fetched again up to
@@ -64,7 +76,7 @@ flag ids that appear with different content as conflicts (`design.md` D9).
 
 ### Requirement: The collected set reconciles with the reported total
 The count of distinct ids SHALL equal `totalRecords`, with no conflicts. Otherwise the collector SHALL
-repeat the whole collection once (`CollectionAttempts` default 2), and if that also fails, fail with
+repeat the whole collection once (`CollectionAttempts` default 2, `design.md` D20), and if that also fails, fail with
 `incomplete-dataset` or `conflicting-records` carrying expected count, collected count, duplicate ids
 and conflicting ids.
 

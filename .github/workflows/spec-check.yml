@@ -1,0 +1,26 @@
+name: Spec check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  spec-check:
+    name: OpenSpec validation and drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Validate specs and changes (strict)
+        run: npm run --silent spec:validate
+      - name: Archived changes have every task done
+        run: npm run --silent spec:archived
+      - name: Drift between specs, design, code and tests
+        run: npm run --silent spec:drift
