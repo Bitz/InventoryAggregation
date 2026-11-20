@@ -43,7 +43,7 @@ export InventoryApi__ApiKey="<API key>"
 
 The key is sent in the `X-Api-Key` header and nowhere else. Every other setting has a default in
 `src/InventoryAggregation.Api/appsettings.json`; the full list with ranges is in
-[design.md §8](openspec/changes/add-inventory-category-report/design.md). A missing or out-of-range setting
+[design.md §8](openspec/changes/archive/2026-11-20-add-inventory-category-report/design.md). A missing or out-of-range setting
 stops the service at startup with a message that names it, for example:
 
 ```
@@ -130,7 +130,7 @@ upstream's usual even-page repeats, 1050 is the injected one.
 | `503` | Upstream throttling beyond what the service waits for; carries `Retry-After` |
 | `504` | The whole collection exceeded its deadline (60 s by default) |
 
-Every failure has a `kind` (one of the 13 in [design.md §5](openspec/changes/add-inventory-category-report/design.md)),
+Every failure has a `kind` (one of the 13 in [design.md §5](openspec/changes/archive/2026-11-20-add-inventory-category-report/design.md)),
 `type` `urn:inventory-aggregation:{kind}`, and the request's `traceId`. Integrity failures add their
 evidence (`page`, `expectedCount`, `collectedCount`, `duplicateIds`, `conflictingIds`, `rejectedRecords`).
 Bodies never contain the key, the upstream address or a stack trace (stack traces appear in
@@ -353,7 +353,7 @@ Faults are handled in two layers because they are different faults:
 Expected failures travel as values (a page or a classified failure; a dataset or a classified failure),
 not exceptions, so the endpoint maps each to a status in one place and nothing unhandled reaches a
 caller. The full design, with the reasoning behind every choice, is in
-[`design.md`](openspec/changes/add-inventory-category-report/design.md).
+[`design.md`](openspec/changes/archive/2026-11-20-add-inventory-category-report/design.md).
 
 ## Decisions and assumptions
 
@@ -408,7 +408,7 @@ decision table in `design.md` §4.
 ## Upstream behaviour
 
 Recorded with `tools/probe` before any code was written. Details in
-[`probe-findings.md`](openspec/changes/add-inventory-category-report/probe-findings.md).
+[`probe-findings.md`](openspec/changes/archive/2026-11-20-add-inventory-category-report/probe-findings.md).
 
 - **Rate limit:** 5 requests per 10 seconds, then `429` with `Retry-After` in seconds.
 - **Overlapping pages:** every even-numbered page repeats the previous page's last record, so it carries
@@ -423,9 +423,17 @@ Recorded with `tools/probe` before any code was written. Details in
 
 - **About 10 seconds per report.** The upstream's rate limit, not the service, sets this. Concurrent
   callers share one collection, but each new report pays it again.
-- **One instance.** The shared collection (D24) and the rate limiter (D22) live in memory. Several
-  instances would each collect separately and compete for the same upstream limit. Next step: a shared
-  limiter (for example in Redis) or a short-lived shared result.
+- **Built for on-demand use on one instance, not for high read traffic.** The shared collection (D24) and
+  the rate limiter (D22) live in memory. On one instance, load only adds waiting: one collection runs at a
+  time, so the upstream sees at most about 8 requests per 10 s however many callers queue, and each waits
+  10–20 s. Several instances would each pace themselves separately, together exceed the upstream's limit,
+  and answer with `503 upstream-throttled`. A shared limiter (for example in Redis) would fix that but is
+  the harder problem. The simpler next step is a single background job that collects on a schedule and
+  stores a snapshot that every instance serves. The upstream then sees one client however many instances
+  run, and the in-process limiter is enough. That trades freshness for scale: responses would carry an
+  "as of" time and could be minutes old.
+- **No limit on the service's own callers.** Coalescing already caps upstream load, so this only matters for
+  protecting the service itself; ASP.NET Core's rate-limiting middleware would cover it.
 - **No caching, no persistence, no last-good fallback** (D17, D23). When the upstream is down, callers get
   an error, not the last good report. Adding one needs storage and a way to show how old the data is.
 - **Waiting for a permit counts toward the page timeout.** With one collection per instance the longest
@@ -459,7 +467,8 @@ src/InventoryAggregation.Api       host, endpoint, failure mapping, upstream cli
 tests/                             Core tests (scripted page source) and Api tests (scripted HTTP, WebApplicationFactory)
 tools/FakeInventoryApi/            local fake upstream with fault modes
 tools/openspec/                    drift checker used by spec:check
-openspec/                          project context and the specification change (proposal, design, specs, tasks, probe findings)
+openspec/specs/                    the built behaviour, one spec per capability, every scenario tested
+openspec/changes/archive/          the archived change: proposal, design (decisions D1–D26), tasks, probe findings
 .github/workflows/, .githooks/     spec checks in CI and before each commit
 recordings/                        (git-ignored) raw upstream responses and the expected report
 ```

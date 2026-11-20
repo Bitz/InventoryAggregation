@@ -114,6 +114,27 @@ for (const change of changeDirs) {
   }
 }
 
+// Once a change is archived its design still defines the failure kinds and settings the code must
+// match. Without an open change that defines them, use the most recently archived design that does.
+const archiveDir = join(changesDir, 'archive');
+if ((!allKinds.size || !allSettings.size) && existsSync(archiveDir)) {
+  const archived = readdirSync(archiveDir).filter((d) => statSync(join(archiveDir, d)).isDirectory()).sort().reverse();
+  for (const name of archived) {
+    const designPath = join(archiveDir, name, 'design.md');
+    if (!existsSync(designPath)) continue;
+    const design = read(designPath);
+    if (!allKinds.size) {
+      const kinds = firstColumnCodes(section(design, 5));
+      if (kinds.length) { kinds.forEach((k) => allKinds.add(k)); notes.push(`kinds: from archived ${name}`); }
+    }
+    if (!allSettings.size) {
+      const settings = firstColumnCodes(section(design, 8));
+      if (settings.length) { settings.forEach((s) => allSettings.add(s)); notes.push(`settings: from archived ${name}`); }
+    }
+    if (allKinds.size && allSettings.size) break;
+  }
+}
+
 // ------------------------------------------------------------------ code
 const sourceFiles = walk(join(root, 'src'), (p) => p.endsWith('.cs'));
 if (sourceFiles.length && allKinds.size) {
