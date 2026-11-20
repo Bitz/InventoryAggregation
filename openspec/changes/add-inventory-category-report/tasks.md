@@ -96,7 +96,7 @@ was left and how it would be done into the README's limitations section instead 
       app, running the tests, the endpoint with a sample `curl` and sample responses (success and one
       failure).
 - [x] Architecture note, half a page: the pieces in `design.md` §1 and why the splits are where they are.
-- [x] Assumptions and decisions: D1–D25 in plain words, and every response-shape deviation.
+- [x] Assumptions and decisions: D1–D26 in plain words, and every response-shape deviation.
 - [x] Known limitations and next steps: no caching (D17); coalescing (D24) works within one instance
       only, so several instances would each collect and share the upstream's rate limit; no persistence
       (D23); no metrics export, anything from §0–§8 left undone, and what would change with more time.
@@ -122,3 +122,12 @@ was left and how it would be done into the README's limitations section instead 
       searched for the key and the upstream address.
 - [x] Progress logged per page at `Information`, prefixed with the collection's short id: each page, the end
       check, rate-limit permit waits and the closing line (`service-telemetry`, "Progress is logged per page").
+
+## 12. Data lineage (`data-lineage`, D26)
+- [x] Collector keeps extract lineage: records received, refetch and re-collection reasons, collapsed
+      duplicates with their pages. Validator keeps the raw category spelling and the timestamp-corrected ids.
+- [x] `RunAuditBuilder`: extract, transform and load sections and the dataset fingerprint; pure.
+- [x] `?include=audit` on the endpoint; one `RunManifest` log record per run, success or failure; counters for
+      rejects by reason, collapsed duplicates and normalized spellings.
+- [x] Tests for every `data-lineage` scenario; checked against the fake upstream (same fingerprint on two
+      healthy runs, a different one in `bad-record` mode).

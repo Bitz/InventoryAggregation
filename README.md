@@ -136,6 +136,67 @@ evidence (`page`, `expectedCount`, `collectedCount`, `duplicateIds`, `conflictin
 Bodies never contain the key, the upstream address or a stack trace (stack traces appear in
 `Development` only).
 
+## Run audit (lineage)
+
+The service is an aggregating ETL pipeline, and every run can account for itself. Ask for the audit with
+`include=audit`; without it the response is unchanged:
+
+```bash
+curl -s "http://localhost:5080/api/inventory/categories?include=audit"
+```
+
+The `audit` block (from the fake upstream in `bad-record` mode; lists shortened):
+
+```json
+"audit": {
+  "runId": "4b334d",
+  "startedAt": "2026-11-20T09:04:23.1238701Z",
+  "finishedAt": "2026-11-20T09:04:33.2856838Z",
+  "fingerprint": "sha256:4b6c530aa25b56062619c303c0ec37e3929126bd97cd17a870d29a720a7a5918",
+  "extract": {
+    "reportedTotalRecords": 157, "reportedTotalPages": 7, "recordsReceived": 160, "distinctRecords": 157,
+    "requests": 8, "collectionAttempts": 1, "pageRefetches": [], "recollections": [],
+    "collapsedDuplicates": [ { "id": 1025, "pages": [1, 2] }, { "id": 1075, "pages": [3, 4] }, { "id": 1125, "pages": [5, 6] } ]
+  },
+  "transform": {
+    "categories": [ { "category": "Toys", "spellings": [ { "spelling": "  toys ", "records": 5 }, { "spelling": " Toys", "records": 5 } ] } ],
+    "timestamps": { "convertedToUtc": [], "assumedUtc": [] },
+    "rejected": [ { "id": 1099, "reasons": ["price is negative"] } ],
+    "zeroQuantityExcluded": [ { "category": "Discontinued", "ids": [1151, 1152, 1153, 1154, 1155, 1156, 1157] } ]
+  },
+  "load": {
+    "categories": [
+      { "category": "Discontinued", "recordsIn": 7, "zeroQuantityExcluded": 7, "recordsOut": 0 },
+      { "category": "Toys", "recordsIn": 29, "zeroQuantityExcluded": 3, "recordsOut": 26 }
+    ],
+    "recordsIn": 156, "rejected": 1, "zeroQuantityExcluded": 21, "recordsOut": 135
+  }
+}
+```
+
+- **Extract** is what was pulled: the upstream's totals, records received including the even-page
+  repeats, distinct records, requests, every page refetch with the check that failed, every re-collection
+  with its reason, and each collapsed duplicate with the pages it arrived on.
+- **Transform** is every correction: per category, each raw spelling and how many records used it (all of
+  them become the category name shown), timestamps converted from an offset or read as UTC, rejected
+  records with reasons, and zero-quantity exclusions per category, including categories that drop out.
+- **Load** is what fed the figures: per category, records in = zero-quantity excluded + records out;
+  overall, records in + rejected = `summary.totalRecords`.
+- **Fingerprint** is a SHA-256 over the distinct records exactly as received, ordered by id. The upstream
+  data is meant to be static, so the fingerprint should stay the same from run to run; a new value means
+  the data changed. The service keeps no history (D23), so compare fingerprints in the log or telemetry
+  backend.
+
+Every run, successful or not, also writes one structured **run manifest** record (event `RunManifest`,
+or `RunManifestWithoutData` when nothing was loaded) whose properties carry the run id, trace id,
+outcome, fingerprint and the extract, transform and load counts. It goes wherever logs go, including OTLP:
+
+```
+report 5529d0: run manifest: outcome success, fingerprint sha256:6f4896e5…; extract: 160 received, 157 distinct,
+3 duplicates collapsed, 0 refetches, 0 re-collections; transform: 0 rejected, 21 zero-quantity, 0 converted to UTC,
+0 assumed UTC, 112 spellings normalized; load: 136 records out; 10.2 s; trace 5529d02e729bd22540224911a4277b0b
+```
+
 ## Progress in the console
 
 Each report logs its progress at `Information` level, one line per upstream page, prefixed with a short
@@ -176,7 +237,8 @@ What is exported:
   span per upstream request.
 - **Metrics** on the `InventoryAggregation` meter: `inventory.collections` and
   `inventory.collection.duration` (both by `inventory.outcome`), `inventory.upstream.retries` (by
-  `inventory.retry.reason`), `inventory.collection.page_refetches`, `inventory.collection.recollections`;
+  `inventory.retry.reason`), `inventory.collection.page_refetches`, `inventory.collection.recollections`, and the data-quality counters `inventory.records.rejected` (by
+  `inventory.rejection.reason`), `inventory.records.duplicates_collapsed` and `inventory.records.spellings_normalized`;
   plus the ASP.NET Core server metrics.
 
 The upstream address is kept out like a secret: upstream request spans keep the method, status and path
@@ -191,7 +253,7 @@ payloads.
 dotnet test
 ```
 
-129 tests, about 10 seconds. No test calls the real upstream. Retries, backoff, timeouts and the rate
+143 tests, about 10 seconds. No test calls the real upstream. Retries, backoff, timeouts and the rate
 limiter run on `FakeTimeProvider`, so a 30-second page timeout takes a fraction of a second. Tests that
 cover a spec scenario carry `[Trait("Scenario", "<capability>/<scenario title>")]`; every scenario in the
 six specs has at least one.
@@ -338,6 +400,8 @@ decision table in `design.md` §4.
   is kept after it ends. The shared run stops only when every caller waiting on it has gone.
 - **Outbound requests** carry only `Host` and the key header: no User-Agent, no trace-context headers.
   Default request logging is off because it writes the upstream URL; retries are logged by page instead.
+- **Run audit** (D26): every run builds its lineage (extract, transform, load, fingerprint). The response
+  carries it with `?include=audit`; every run logs it as a structured manifest record.
 - **Telemetry** (D25) goes through OpenTelemetry, exported over OTLP only when an endpoint is configured,
   without the upstream address or the key.
 

@@ -21,7 +21,31 @@ public sealed record CollectedDataset(
     int Requests,
     int PageRefetches,
     int CollectionAttempts,
-    IReadOnlyList<long> CollapsedDuplicateIds);
+    IReadOnlyList<long> CollapsedDuplicateIds)
+{
+    /// <summary>What the extract did and why, for the audit (design.md D26).</summary>
+    public CollectionLineage Lineage { get; init; } = CollectionLineage.Empty;
+}
+
+/// <summary>The extract side of a run: what arrived, what was asked for again, and why.</summary>
+/// <param name="ReportedTotalPages">The total pages page 1 reported.</param>
+/// <param name="RecordsReceived">Records on the data pages of the final pass, repeats included.</param>
+/// <param name="PageRefetches">Every page fetched again, across all passes, with the problem that caused it.</param>
+/// <param name="Recollections">Why each earlier pass was discarded.</param>
+/// <param name="CollapsedDuplicates">Ids that arrived more than once with identical content, and on which pages.</param>
+public sealed record CollectionLineage(
+    int ReportedTotalPages,
+    int RecordsReceived,
+    IReadOnlyList<PageRefetch> PageRefetches,
+    IReadOnlyList<string> Recollections,
+    IReadOnlyList<CollapsedDuplicate> CollapsedDuplicates)
+{
+    public static readonly CollectionLineage Empty = new(0, 0, [], [], []);
+}
+
+public sealed record PageRefetch(int Page, string Reason);
+
+public sealed record CollapsedDuplicate(long Id, IReadOnlyList<int> Pages);
 
 /// <summary>A verified dataset or the reason there is none. Never a partial dataset (design.md D7).</summary>
 public sealed class CollectionResult
@@ -100,6 +124,7 @@ public sealed partial class InventoryCollector(
                 {
                     LogRecollecting(attempt, failure.Detail);
                     metrics.Recollected();
+                    counters.AddRecollection($"attempt {attempt}: {failure.Detail}");
                 }
             }
 
@@ -223,7 +248,7 @@ public sealed partial class InventoryCollector(
         {
             if (fetch > 1)
             {
-                counters.AddRefetch();
+                counters.AddRefetch(page, lastProblem!);
                 metrics.PageRefetched();
                 LogRefetching(page, fetch - 1, lastProblem!);
             }
@@ -351,11 +376,12 @@ public sealed partial class InventoryCollector(
     private async Task<InventoryFailure?> ConfirmEndAsync(int page, Counters counters, CancellationToken cancellationToken)
     {
         var fetches = 1 + settings.PageRefetchLimit;
+        string? lastProblem = null;
         for (var fetch = 1; ; fetch++)
         {
             if (fetch > 1)
             {
-                counters.AddRefetch();
+                counters.AddRefetch(page, lastProblem ?? "the end check did not parse");
                 metrics.PageRefetched();
             }
 
@@ -387,6 +413,7 @@ public sealed partial class InventoryCollector(
 
             if (failure.Kind == FailureKinds.MalformedResponse && fetch < fetches)
             {
+                lastProblem = failure.Detail;
                 continue;
             }
 
@@ -410,15 +437,18 @@ public sealed partial class InventoryCollector(
         Counters counters)
     {
         var byId = new Dictionary<long, RawRecord>();
+        var pagesOf = new Dictionary<long, List<int>>();
         var records = new List<RawRecord>();
         var duplicates = new SortedSet<long>();
         var conflicts = new SortedSet<long>();
         var withoutId = 0;
+        var received = 0;
 
         foreach (var page in pages)
         {
             foreach (var record in page.Records)
             {
+                received++;
                 if (record.Id is not { } id)
                 {
                     // No identity to compare on; it counts as its own record and validation rejects it.
@@ -426,6 +456,13 @@ public sealed partial class InventoryCollector(
                     records.Add(record);
                     continue;
                 }
+
+                if (!pagesOf.TryGetValue(id, out var seenOn))
+                {
+                    pagesOf[id] = seenOn = [];
+                }
+
+                seenOn.Add(page.Page);
 
                 if (byId.TryGetValue(id, out var existing))
                 {
@@ -480,7 +517,15 @@ public sealed partial class InventoryCollector(
             counters.Requests,
             counters.PageRefetches,
             counters.Attempts,
-            [.. duplicates]), null);
+            [.. duplicates])
+        {
+            Lineage = new CollectionLineage(
+                pages[0].TotalPages,
+                received,
+                counters.RefetchReasons,
+                counters.RecollectionReasons,
+                [.. duplicates.Select(id => new CollapsedDuplicate(id, pagesOf[id]))]),
+        }, null);
     }
 
     private static string StatusText(int? status) => status?.ToString(CultureInfo.InvariantCulture) ?? "none";
@@ -498,7 +543,20 @@ public sealed partial class InventoryCollector(
 
         public void AddRequests(int count) => Interlocked.Add(ref _requests, count);
 
-        public void AddRefetch() => Interlocked.Increment(ref _pageRefetches);
+        private readonly System.Collections.Concurrent.ConcurrentQueue<PageRefetch> _refetchReasons = new();
+        private readonly System.Collections.Concurrent.ConcurrentQueue<string> _recollectionReasons = new();
+
+        public IReadOnlyList<PageRefetch> RefetchReasons => [.. _refetchReasons.OrderBy(r => r.Page)];
+
+        public IReadOnlyList<string> RecollectionReasons => [.. _recollectionReasons];
+
+        public void AddRefetch(int page, string reason)
+        {
+            Interlocked.Increment(ref _pageRefetches);
+            _refetchReasons.Enqueue(new PageRefetch(page, reason));
+        }
+
+        public void AddRecollection(string reason) => _recollectionReasons.Enqueue(reason);
     }
 
     [LoggerMessage(Level = LogLevel.Information, Message = "report {ReportId}: collected {Records} records over {Pages} pages in {Requests} requests, {ElapsedSeconds:0.0} s ({Refetches} page refetches, {Attempts} collection attempts)")]

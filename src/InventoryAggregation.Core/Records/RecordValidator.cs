@@ -17,6 +17,8 @@ public sealed partial class RecordValidator
         var accepted = new List<InventoryRecord>();
         var rejected = new List<RejectedRecord>();
         var assumedUtc = 0;
+        var assumedIds = new List<long>();
+        var convertedIds = new List<long>();
 
         foreach (var record in records)
         {
@@ -38,6 +40,12 @@ public sealed partial class RecordValidator
             if (offsetAssumed)
             {
                 assumedUtc++;
+                assumedIds.Add(id!.Value);
+            }
+            else if (DateTimeOffset.TryParse(record.LastUpdated, CultureInfo.InvariantCulture, DateTimeStyles.None, out var original)
+                && original.Offset != TimeSpan.Zero)
+            {
+                convertedIds.Add(id!.Value);
             }
 
             accepted.Add(new InventoryRecord(
@@ -46,10 +54,17 @@ public sealed partial class RecordValidator
                 category!.Trim(),
                 price!.Value,
                 quantity!.Value,
-                lastUpdated!.Value));
+                lastUpdated!.Value)
+            {
+                RawCategory = category,
+            });
         }
 
-        return new ValidationResult(accepted, rejected, assumedUtc);
+        return new ValidationResult(accepted, rejected, assumedUtc)
+        {
+            AssumedUtcIds = assumedIds,
+            ConvertedToUtcIds = convertedIds,
+        };
     }
 
     private static long? CheckId(RawRecord record, List<string> reasons)

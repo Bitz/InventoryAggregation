@@ -21,7 +21,11 @@ public sealed record ReportSummary(
     DateTimeOffset GeneratedAt);
 
 /// <summary>The category report: figures per category and the summary that accounts for them.</summary>
-public sealed record CategoryReport(IReadOnlyList<CategorySummary> Categories, ReportSummary Summary);
+public sealed record CategoryReport(IReadOnlyList<CategorySummary> Categories, ReportSummary Summary)
+{
+    /// <summary>The lineage of the run (design.md D26). Always built; the endpoint shows it on request.</summary>
+    public RunAudit? Audit { get; init; }
+}
 
 /// <summary>A report, or the reason there is none.</summary>
 public sealed class ReportResult
@@ -127,11 +131,16 @@ public sealed partial class InventoryReportService(
             ? activity.TraceId.ToHexString()[..6]
             : Convert.ToHexStringLower(BitConverter.GetBytes(Random.Shared.Next()))[..6]);
         var started = timeProvider.GetTimestamp();
+        var startedAt = timeProvider.GetUtcNow();
         var outcome = "internal-error";
+        RunAudit? audit = null;
+        string? failureDetail = null;
         try
         {
-            var result = await BuildReportAsync(run.Cancellation.Token).ConfigureAwait(false);
+            var result = await BuildReportAsync(startedAt, run.Cancellation.Token).ConfigureAwait(false);
             outcome = result.IsSuccess ? "success" : result.Failure.Kind;
+            audit = result.Report?.Audit;
+            failureDetail = result.Failure?.Detail;
             if (result.IsSuccess)
             {
                 activity?.SetTag("inventory.pages", result.Report.Summary.PagesFetched);
@@ -158,7 +167,9 @@ public sealed partial class InventoryReportService(
         finally
         {
             activity?.SetTag("inventory.outcome", outcome);
-            metrics.CollectionFinished(outcome, timeProvider.GetElapsedTime(started));
+            var elapsed = timeProvider.GetElapsedTime(started);
+            metrics.CollectionFinished(outcome, elapsed);
+            WriteManifest(outcome, activity?.TraceId.ToHexString() ?? "none", audit, failureDetail, elapsed);
             lock (_gate)
             {
                 if (ReferenceEquals(_current, run))
@@ -169,7 +180,7 @@ public sealed partial class InventoryReportService(
         }
     }
 
-    private async Task<ReportResult> BuildReportAsync(CancellationToken cancellationToken)
+    private async Task<ReportResult> BuildReportAsync(DateTimeOffset startedAt, CancellationToken cancellationToken)
     {
         CollectionResult collected;
 
@@ -189,6 +200,10 @@ public sealed partial class InventoryReportService(
 
         var dataset = collected.Dataset;
         var validation = validator.Validate(dataset.Records);
+        foreach (var reason in validation.Rejected.SelectMany(r => r.Reasons))
+        {
+            metrics.RecordRejected(reason);
+        }
 
         if (validation.Rejected.Count > 0)
         {
@@ -216,7 +231,46 @@ public sealed partial class InventoryReportService(
             Requests: dataset.Requests,
             GeneratedAt: timeProvider.GetUtcNow());
 
-        return ReportResult.Success(new CategoryReport(aggregation.Categories, summary));
+        var audit = RunAuditBuilder.Build(ReportRun.Id, startedAt, summary.GeneratedAt, dataset, validation, aggregation);
+        metrics.DuplicatesCollapsed(audit.Extract.CollapsedDuplicates.Count);
+        metrics.SpellingsNormalized(RunAuditBuilder.NormalizedSpellings(audit));
+
+        return ReportResult.Success(new CategoryReport(aggregation.Categories, summary) { Audit = audit });
+    }
+
+    /// <summary>One structured record per run, so a run can be audited from the log backend alone (design.md D26).</summary>
+    private void WriteManifest(string outcome, string traceId, RunAudit? audit, string? failureDetail, TimeSpan elapsed)
+    {
+        if (!logger.IsEnabled(LogLevel.Information))
+        {
+            return;
+        }
+
+        var seconds = elapsed.TotalSeconds;
+        if (audit is null)
+        {
+            LogManifestWithoutData(ReportRun.Id, traceId, outcome, failureDetail ?? "none", seconds);
+            return;
+        }
+
+        var normalized = RunAuditBuilder.NormalizedSpellings(audit);
+        LogManifest(
+            ReportRun.Id,
+            traceId,
+            outcome,
+            audit.Fingerprint,
+            audit.Extract.RecordsReceived,
+            audit.Extract.DistinctRecords,
+            audit.Extract.CollapsedDuplicates.Count,
+            audit.Extract.PageRefetches.Count,
+            audit.Extract.Recollections.Count,
+            audit.Load.Rejected,
+            audit.Load.ZeroQuantityExcluded,
+            audit.Transform.Timestamps.ConvertedToUtc.Count,
+            audit.Transform.Timestamps.AssumedUtc.Count,
+            normalized,
+            audit.Load.RecordsOut,
+            seconds);
     }
 
     private sealed class SharedRun
@@ -233,6 +287,12 @@ public sealed partial class InventoryReportService(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Every caller waiting on the report collection has gone; stopping it")]
     private partial void LogAbandoned();
+
+    [LoggerMessage(EventId = 2600, EventName = "RunManifest", Level = LogLevel.Information, Message = "report {RunId}: run manifest: outcome {Outcome}, fingerprint {Fingerprint}; extract: {RecordsReceived} received, {DistinctRecords} distinct, {CollapsedDuplicates} duplicates collapsed, {PageRefetches} refetches, {Recollections} re-collections; transform: {Rejected} rejected, {ZeroQuantityExcluded} zero-quantity, {ConvertedToUtc} converted to UTC, {AssumedUtc} assumed UTC, {NormalizedSpellings} spellings normalized; load: {RecordsOut} records out; {DurationSeconds:0.0} s; trace {TraceId}")]
+    private partial void LogManifest(string runId, string traceId, string outcome, string fingerprint, int recordsReceived, int distinctRecords, int collapsedDuplicates, int pageRefetches, int recollections, int rejected, int zeroQuantityExcluded, int convertedToUtc, int assumedUtc, int normalizedSpellings, int recordsOut, double durationSeconds);
+
+    [LoggerMessage(EventId = 2601, EventName = "RunManifestWithoutData", Level = LogLevel.Information, Message = "report {RunId}: run manifest: outcome {Outcome}, no data loaded ({Detail}); {DurationSeconds:0.0} s; trace {TraceId}")]
+    private partial void LogManifestWithoutData(string runId, string traceId, string outcome, string detail, double durationSeconds);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "{Count} record(s) failed validation (policy {Policy})")]
     private partial void LogRejected(int count, InvalidRecordPolicy policy);

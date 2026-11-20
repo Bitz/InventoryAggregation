@@ -55,16 +55,20 @@ public sealed class CategoryAggregator
         return new AggregationResult(categories, zeroQuantity);
     }
 
-    private static CategorySummary Summarize(IEnumerable<InventoryRecord> group)
-    {
-        var items = group.OrderBy(r => r.Id).ToList();
-
-        var displayName = items
-            .GroupBy(r => r.Category, StringComparer.Ordinal)
+    /// <summary>The name a group of trimmed spellings is shown under: the most frequent, ties to ordinal order (design.md D11).</summary>
+    public static string DisplayName(IEnumerable<string> trimmedSpellings) =>
+        trimmedSpellings
+            .GroupBy(spelling => spelling, StringComparer.Ordinal)
             .OrderByDescending(spelling => spelling.Count())
             .ThenBy(spelling => spelling.Key, StringComparer.Ordinal)
             .First()
             .Key;
+
+    private static CategorySummary Summarize(IEnumerable<InventoryRecord> group)
+    {
+        var items = group.OrderBy(r => r.Id).ToList();
+
+        var displayName = DisplayName(items.Select(r => r.Category));
 
         var unrounded = 0m;
         foreach (var item in items)

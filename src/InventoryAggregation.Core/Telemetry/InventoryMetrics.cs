@@ -25,6 +25,9 @@ public sealed class InventoryMetrics
     private readonly Counter<long> _retries;
     private readonly Counter<long> _refetches;
     private readonly Counter<long> _recollections;
+    private readonly Counter<long> _rejected;
+    private readonly Counter<long> _duplicates;
+    private readonly Counter<long> _normalized;
 
     public InventoryMetrics(IMeterFactory meterFactory)
     {
@@ -35,6 +38,9 @@ public sealed class InventoryMetrics
         _retries = meter.CreateCounter<long>("inventory.upstream.retries", description: "Upstream requests retried, by what caused the retry.");
         _refetches = meter.CreateCounter<long>("inventory.collection.page_refetches", description: "Pages fetched again because they disagreed or did not parse.");
         _recollections = meter.CreateCounter<long>("inventory.collection.recollections", description: "Full collections repeated because the first did not reconcile.");
+        _rejected = meter.CreateCounter<long>("inventory.records.rejected", description: "Rejection reasons found by validation, one per reason.");
+        _duplicates = meter.CreateCounter<long>("inventory.records.duplicates_collapsed", description: "Ids that arrived more than once with identical content and were kept once.");
+        _normalized = meter.CreateCounter<long>("inventory.records.spellings_normalized", description: "Accepted records whose category spelling differed from the name it is shown under.");
     }
 
     public void CollectionFinished(string outcome, TimeSpan duration)
@@ -49,4 +55,10 @@ public sealed class InventoryMetrics
     public void PageRefetched() => _refetches.Add(1);
 
     public void Recollected() => _recollections.Add(1);
+
+    public void RecordRejected(string reason) => _rejected.Add(1, new KeyValuePair<string, object?>("inventory.rejection.reason", reason));
+
+    public void DuplicatesCollapsed(int count) => _duplicates.Add(count);
+
+    public void SpellingsNormalized(int count) => _normalized.Add(count);
 }

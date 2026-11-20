@@ -32,13 +32,14 @@ public static partial class CategoryReportEndpoint
     private static async Task<IResult> GetReportAsync(
         InventoryReportService reports,
         HttpContext context,
+        [FromQuery] string? include,
         [FromServices] ILoggerFactory loggerFactory)
     {
         try
         {
             var result = await reports.GetReportAsync(context.RequestAborted);
             return result.IsSuccess
-                ? TypedResults.Ok(CategoryReportResponse.From(result.Report))
+                ? TypedResults.Ok(CategoryReportResponse.From(result.Report, IncludesAudit(include)))
                 : FailureResponses.ToResult(result.Failure, context);
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
@@ -49,6 +50,11 @@ public static partial class CategoryReportEndpoint
             return Results.Empty;
         }
     }
+
+    /// <summary><c>include</c> is a comma-separated list; <c>audit</c> adds the run's lineage. Other values are ignored.</summary>
+    private static bool IncludesAudit(string? include) =>
+        include?.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Contains("audit", StringComparer.OrdinalIgnoreCase) == true;
 
     [LoggerMessage(Level = LogLevel.Information, Message = "The caller disconnected before the report was ready")]
     private static partial void LogCallerLeft(ILogger logger);

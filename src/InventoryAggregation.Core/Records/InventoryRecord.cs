@@ -7,7 +7,11 @@ public sealed record InventoryRecord(
     string Category,
     decimal Price,
     long Quantity,
-    DateTimeOffset LastUpdated);
+    DateTimeOffset LastUpdated)
+{
+    /// <summary>The category exactly as the upstream sent it, before trimming; kept for the audit (design.md D26).</summary>
+    public string? RawCategory { get; init; }
+}
 
 /// <summary>A record that failed validation, with every reason that applies.</summary>
 public sealed record RejectedRecord(long? Id, IReadOnlyList<string> Reasons);
@@ -19,4 +23,11 @@ public sealed record RejectedRecord(long? Id, IReadOnlyList<string> Reasons);
 public sealed record ValidationResult(
     IReadOnlyList<InventoryRecord> Accepted,
     IReadOnlyList<RejectedRecord> Rejected,
-    int AssumedUtcTimestamps);
+    int AssumedUtcTimestamps)
+{
+    /// <summary>Accepted ids whose <c>lastUpdated</c> carried a non-zero offset and was converted to UTC.</summary>
+    public IReadOnlyList<long> ConvertedToUtcIds { get; init; } = [];
+
+    /// <summary>Accepted ids whose <c>lastUpdated</c> had no offset and was read as UTC.</summary>
+    public IReadOnlyList<long> AssumedUtcIds { get; init; } = [];
+}

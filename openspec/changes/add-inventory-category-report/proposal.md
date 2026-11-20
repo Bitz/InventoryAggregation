@@ -29,6 +29,8 @@ computes anything.
   startup; the key is kept out of source control and logs.
 - **service-telemetry**: logs, traces and metrics through OpenTelemetry, exported over OTLP when an endpoint
   is configured, with the upstream address and the key kept out of them.
+- **data-lineage**: an audit of each run (what was extracted, every correction made, what was loaded) and a
+  dataset fingerprint, on request in the response and always as a logged run manifest.
 
 ## Impact
 
@@ -42,4 +44,4 @@ computes anything.
 ## Decisions
 
 The judgement calls (zero-quantity categories, ties, rounding, category spelling, invalid records,
-partial results, status codes) are D1–D25 in `design.md` §4.
+partial results, status codes) are D1–D26 in `design.md` §4.

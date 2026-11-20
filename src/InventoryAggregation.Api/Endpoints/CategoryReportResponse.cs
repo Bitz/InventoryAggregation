@@ -8,14 +8,35 @@ namespace InventoryAggregation.Api.Endpoints;
 // The response contract of GET /api/inventory/categories. Timestamps are UTC DateTime values so they
 // serialize with a trailing "Z".
 
-public sealed record CategoryReportResponse(IReadOnlyList<CategoryResponse> Categories, ReportSummaryResponse Summary)
+public sealed record CategoryReportResponse(
+    IReadOnlyList<CategoryResponse> Categories,
+    ReportSummaryResponse Summary,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] AuditResponse? Audit = null)
 {
-    public static CategoryReportResponse From(CategoryReport report)
+    public static CategoryReportResponse From(CategoryReport report, bool includeAudit = false)
     {
         ArgumentNullException.ThrowIfNull(report);
         return new(
             [.. report.Categories.Select(CategoryResponse.From)],
-            ReportSummaryResponse.From(report.Summary));
+            ReportSummaryResponse.From(report.Summary),
+            includeAudit && report.Audit is { } audit ? AuditResponse.From(audit) : null);
+    }
+}
+
+/// <summary>The run's lineage, returned with <c>?include=audit</c> (design.md D26).</summary>
+public sealed record AuditResponse(
+    string RunId,
+    DateTime StartedAt,
+    DateTime FinishedAt,
+    string Fingerprint,
+    ExtractAudit Extract,
+    TransformAudit Transform,
+    LoadAudit Load)
+{
+    public static AuditResponse From(RunAudit audit)
+    {
+        ArgumentNullException.ThrowIfNull(audit);
+        return new(audit.RunId, audit.StartedAt.UtcDateTime, audit.FinishedAt.UtcDateTime, audit.Fingerprint, audit.Extract, audit.Transform, audit.Load);
     }
 }
 
