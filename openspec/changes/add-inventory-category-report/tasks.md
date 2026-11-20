@@ -82,7 +82,7 @@ was left and how it would be done into the README's limitations section instead 
       pauses about a millisecond between fake-clock steps so thread-pool continuations run before time moves on.
 
 ## 8. Local fault stub
-- [ ] `tools/FakeInventoryApi`: a minimal app that serves a generated static dataset on
+- [x] `tools/FakeInventoryApi`: a minimal app that serves a generated static dataset on
       `/api/records` and takes a fault mode per run (`healthy` (as observed: even-page overlap, padded mixed-case
       categories, 5-per-10-s limit), `flaky-500`, `throttle`, `hang`,
       `drift-totals`, `overlap`, `short-page`, `wrong-page`, `conflict`, `bad-record`, `truncated`,
